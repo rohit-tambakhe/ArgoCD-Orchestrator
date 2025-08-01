@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ArgoCD Orchestrator for rtte
 
 A comprehensive ArgoCD orchestrator with Config as Code (CAC) integration for managing multi-tenant deployments on AWS EKS.
@@ -415,3 +416,6 @@ For support and questions:
 ---
 
 **Built with ❤️ by the rtte team** 
+=======
+# ArgoCD-Orchestrator
+>>>>>>> 3c50022d59846bba63b2465b40b8599dfaf3b454
