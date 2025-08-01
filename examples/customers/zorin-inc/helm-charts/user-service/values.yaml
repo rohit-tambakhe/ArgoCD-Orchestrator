@@ -1,0 +1,62 @@
+# User Service Configuration for Zorin Inc
+# Based on Spring Boot PetClinic application
+replicaCount: 2
+
+image:
+  repository: registry.hub.docker.com/library/spring-petclinic
+  tag: "2.7.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: user-service.zorin.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "kubernetes"
+  - name: DB_HOST
+    value: "postgres-service"
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_NAME
+    value: "zorin_users"
+
+# Sync wave for dependency management
+annotations:
+  argocd.argoproj.io/sync-wave: "1"
+  argocd.argoproj.io/hook: PreSync
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10 

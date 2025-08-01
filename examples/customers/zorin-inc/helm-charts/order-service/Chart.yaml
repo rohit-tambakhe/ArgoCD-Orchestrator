@@ -1,0 +1,14 @@
+apiVersion: v2
+name: order-service
+description: Order management microservice for Zorin Inc (based on Spring Boot REST API)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - order
+  - ecommerce
+  - zorin
+  - spring-boot
+maintainers:
+  - name: Zorin Inc DevOps
+    email: devops@zorin.com 

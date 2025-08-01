@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argocd-orchestrator
+  template:
+    metadata:
+      labels:
+        app: argocd-orchestrator
+    spec:
+      containers:
+      - name: argocd-orchestrator
+        image: eclipse-temurin:17-jre-jammy
+        command: ["java"]
+        args: ["-jar", "/app/argocd-orchestrator-1.0.0.jar"]
+        volumeMounts:
+        - name: app-jar
+          mountPath: /app
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "kubernetes"
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:postgresql://postgres:5432/argocd_orchestrator"
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "postgres"
+        - name: SPRING_DATASOURCE_PASSWORD
+          value: "postgres"
+        - name: SPRING_REDIS_HOST
+          value: "redis"
+        - name: SPRING_REDIS_PORT
+          value: "6379"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: app-jar
+        hostPath:
+          path: /tmp/argocd-orchestrator-1.0.0.jar
+          type: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: argocd-orchestrator
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-orchestrator-sa
+  namespace: argocd-orchestrator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-orchestrator-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "namespaces"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["argoproj.io"]
+  resources: ["applications", "applicationsets", "workflows", "rollouts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["events.argoproj.io"]
+  resources: ["eventsources", "sensors", "eventbus"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-orchestrator-binding
+subjects:
+- kind: ServiceAccount
+  name: argocd-orchestrator-sa
+  namespace: argocd-orchestrator
+roleRef:
+  kind: ClusterRole
+  name: argocd-orchestrator-role
+  apiGroup: rbac.authorization.k8s.io 

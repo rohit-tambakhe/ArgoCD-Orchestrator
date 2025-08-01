@@ -1,0 +1,62 @@
+# Notification Service Configuration for Zorin Inc
+# Based on Go Gin API application
+replicaCount: 2
+
+image:
+  repository: registry.hub.docker.com/library/go-gin-api
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: notification-service.zorin.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+env:
+  - name: GIN_MODE
+    value: "release"
+  - name: PORT
+    value: "8080"
+  - name: REDIS_HOST
+    value: "redis-service"
+  - name: REDIS_PORT
+    value: "6379"
+
+# Sync wave for dependency management (depends on other services)
+annotations:
+  argocd.argoproj.io/sync-wave: "3"
+  argocd.argoproj.io/hook: PreSync
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10 

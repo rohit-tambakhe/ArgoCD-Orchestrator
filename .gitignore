@@ -1,0 +1,103 @@
+# Java & Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+build/
+out/
+bin/
+classes/
+test-classes/
+generated-sources/
+generated-test-sources/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Executables
+*.exe
+*.msi
+*.bat
+*.cmd
+*.com
+*.app
+
+# Docker
+.dockerignore
+Dockerfile.*
+docker-compose*.yml
+
+# Kubernetes
+*.kubeconfig
+kubeconfig
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# ArgoCD specific
+argocd.exe
+argocd
+*.exe
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.iso
+*.img
+*.vmdk
+*.vdi
+*.qcow2 

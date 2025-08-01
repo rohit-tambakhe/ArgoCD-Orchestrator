@@ -1,0 +1,66 @@
+# Order Service Configuration for Zorin Inc
+# Based on Spring Boot REST API application
+replicaCount: 3
+
+image:
+  repository: registry.hub.docker.com/library/spring-boot-rest-api
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: order-service.zorin.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 750m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "kubernetes"
+  - name: DB_HOST
+    value: "postgres-service"
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_NAME
+    value: "zorin_orders"
+  - name: USER_SERVICE_URL
+    value: "http://user-service:8080"
+  - name: PAYMENT_SERVICE_URL
+    value: "http://payment-service:8080"
+
+# Sync wave for dependency management (depends on user-service)
+annotations:
+  argocd.argoproj.io/sync-wave: "2"
+  argocd.argoproj.io/hook: PreSync
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10 

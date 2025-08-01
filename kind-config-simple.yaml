@@ -1,0 +1,23 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: argocd-orchestrator
+
+# Simple single-node cluster
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 30000
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 30001
+    protocol: TCP
+  - containerPort: 30002
+    hostPort: 30002
+    protocol: TCP
+  - containerPort: 9090
+    hostPort: 9090
+    protocol: TCP
+  - containerPort: 3000
+    hostPort: 3000
+    protocol: TCP 

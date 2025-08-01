@@ -1,0 +1,64 @@
+# Payment Service Configuration for Zorin Inc
+# Based on Node.js Express API application
+replicaCount: 2
+
+image:
+  repository: registry.hub.docker.com/library/node-express-api
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: payment-service.zorin.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+env:
+  - name: NODE_ENV
+    value: "production"
+  - name: PORT
+    value: "3000"
+  - name: DB_HOST
+    value: "postgres-service"
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_NAME
+    value: "zorin_payments"
+
+# Sync wave for dependency management
+annotations:
+  argocd.argoproj.io/sync-wave: "1"
+  argocd.argoproj.io/hook: PreSync
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10 

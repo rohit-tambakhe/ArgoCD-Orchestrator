@@ -1,0 +1,14 @@
+apiVersion: v2
+name: notification-service
+description: Notification microservice for Zorin Inc (based on Go Gin API)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - notification
+  - messaging
+  - zorin
+  - golang
+maintainers:
+  - name: Zorin Inc DevOps
+    email: devops@zorin.com 
