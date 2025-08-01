@@ -4,7 +4,7 @@ applications:
   - name: uqh
     enabled: true
     version: "1.2.0"
-    imageRepository: "920349478710.dkr.ecr.us-west-2.amazonaws.com/queryhandler"
+    imageRepository: "xxxxxxxxxxx.dkr.ecr.us-west-2.amazonaws.com/rtte-queryhandler"
     deploymentStrategy: BLUE_GREEN
     replicas: 3
     resources:
