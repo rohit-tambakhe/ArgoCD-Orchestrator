@@ -1,0 +1,297 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+    version: v1.0.0
+spec:
+  serviceName: argocd-orchestrator-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: argocd-orchestrator
+  template:
+    metadata:
+      labels:
+        app: argocd-orchestrator
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      serviceAccountName: argocd-orchestrator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: orchestrator
+        image: rtte/argocd-orchestrator:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 8081
+          name: management
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: JAVA_OPTS
+          value: "-Xms512m -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "production"
+        - name: DB_HOST
+          value: "postgresql.argocd-orchestrator.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "argocd_orchestrator"
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: db-username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: db-password
+        - name: REDIS_HOST
+          value: "redis.argocd-orchestrator.svc.cluster.local"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: redis-password
+              optional: true
+        - name: ARGOCD_SERVER_URL
+          value: "https://argocd-server.argocd.svc.cluster.local"
+        - name: ARGOCD_USERNAME
+          value: "admin"
+        - name: ARGOCD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: argocd-password
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: github-token
+        - name: GITHUB_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-secrets
+              key: github-webhook-secret
+        - name: CAC_REPOSITORY_URL
+          value: "https://github.com/rtte/cac-configs"
+        - name: CAC_BRANCH
+          value: "main"
+        - name: CAC_CONFIG_PATH
+          value: "customers"
+        - name: CAC_SSH_KEY_PATH
+          value: "/secrets/git-ssh-key/id_rsa"
+        - name: LEADER_ELECTION_ENABLED
+          value: "true"
+        - name: LEADER_ELECTION_LEASE_DURATION
+          value: "15s"
+        - name: LEADER_ELECTION_RENEW_DEADLINE
+          value: "10s"
+        - name: LEADER_ELECTION_RETRY_PERIOD
+          value: "2s"
+        - name: STATE_STORAGE_PATH
+          value: "/data/state"
+        - name: SYNC_INTERVAL
+          value: "300000"
+        volumeMounts:
+        - name: state-volume
+          mountPath: /data/state
+        - name: git-ssh-key
+          mountPath: /secrets/git-ssh-key
+          readOnly: true
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: logs
+          mountPath: /app/logs
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: management
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: management
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /actuator/health/startup
+            port: management
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+      volumes:
+      - name: git-ssh-key
+        secret:
+          secretName: git-ssh-key
+          defaultMode: 0400
+      - name: config
+        configMap:
+          name: argocd-orchestrator-config
+      - name: logs
+        emptyDir: {}
+      terminationGracePeriodSeconds: 60
+  volumeClaimTemplates:
+  - metadata:
+      name: state-volume
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-orchestrator-headless
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+spec:
+  clusterIP: None
+  selector:
+    app: argocd-orchestrator
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+    protocol: TCP
+  - port: 8081
+    targetPort: 8081
+    name: management
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app: argocd-orchestrator
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+    protocol: TCP
+  - port: 8081
+    targetPort: 8081
+    name: management
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+rules:
+- apiGroups: [""]
+  resources: ["namespaces", "pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["argoproj.io"]
+  resources: ["applications", "applicationsets", "projects"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argocd-orchestrator
+subjects:
+- kind: ServiceAccount
+  name: argocd-orchestrator
+  namespace: argocd-orchestrator
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-orchestrator-config
+  namespace: argocd-orchestrator
+  labels:
+    app: argocd-orchestrator
+data:
+  application.yml: |
+    # Additional configuration overrides
+    logging:
+      level:
+        com.rtte.argocd.orchestrator: INFO
+        org.springframework.web: INFO
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,metrics,prometheus,env,configprops 

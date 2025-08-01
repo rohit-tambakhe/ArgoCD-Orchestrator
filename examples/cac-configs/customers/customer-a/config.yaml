@@ -1,0 +1,135 @@
+customer: customer-a
+environment: production
+applications:
+  - name: uqh
+    enabled: true
+    version: "1.2.0"
+    imageRepository: "920349478710.dkr.ecr.us-west-2.amazonaws.com/queryhandler"
+    deploymentStrategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "2000m"
+        memory: "2048Mi"
+    configMaps:
+      ushurConf: customer-a-ushur-conf
+      configJson: customer-a-config-json
+      ucsConfigJson: customer-a-ucs-config-json
+    volumeClaims:
+      logs: pvc-customer-a-logs
+      data: pvc-customer-a-data
+      sftp: pvc-customer-a-sftp
+    parameters:
+      - name: tolerations.enabled
+        value: "true"
+      - name: tolerations.key
+        value: "customer"
+      - name: tolerations.value
+        value: "customer-a"
+    values:
+      ingress:
+        enabled: true
+        className: nginx
+        hosts:
+          - host: customer-a.rtte.com
+            paths:
+              - path: /
+                pathType: Prefix
+        tls:
+          - secretName: customer-a-tls
+            hosts:
+              - customer-a.rtte.com
+      monitoring:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          interval: 30s
+      security:
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          fsGroup: 1000
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+              - ALL
+    autoSync: true
+    syncPolicy: automated
+
+  - name: redis
+    enabled: true
+    version: "7.0.0"
+    imageRepository: "redis"
+    deploymentStrategy: ROLLING_UPDATE
+    replicas: 1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    volumeClaims:
+      data: pvc-customer-a-redis-data
+    values:
+      persistence:
+        enabled: true
+        size: 10Gi
+      auth:
+        enabled: true
+        existingSecret: customer-a-redis-secret
+      monitoring:
+        enabled: true
+    autoSync: true
+
+  - name: mongodb
+    enabled: true
+    version: "6.0.0"
+    imageRepository: "mongo"
+    deploymentStrategy: ROLLING_UPDATE
+    replicas: 1
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2048Mi"
+    volumeClaims:
+      data: pvc-customer-a-mongo-data
+    values:
+      persistence:
+        enabled: true
+        size: 20Gi
+      auth:
+        enabled: true
+        existingSecret: customer-a-mongo-secret
+      monitoring:
+        enabled: true
+    autoSync: true
+
+globalConfig:
+  region: us-west-2
+  environment: production
+  customerTier: enterprise
+  backupEnabled: true
+  monitoringEnabled: true
+
+labels:
+  customer: customer-a
+  environment: production
+  managed-by: argocd-orchestrator
+  tier: enterprise
+
+annotations:
+  customer.id: customer-a
+  customer.tier: enterprise
+  backup.schedule: "0 2 * * *"
+  monitoring.retention: "30d" 
