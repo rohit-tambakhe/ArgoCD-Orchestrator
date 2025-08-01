@@ -1,0 +1,105 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-events
+spec:
+  nats:
+    native:
+      replicas: 3
+      auth: none
+      persistence:
+        enabled: true
+        storageClassName: gp2
+        size: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      nodeSelector: {}
+      tolerations: []
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 1000
+      serviceAccountName: argo-events-sa
+      image: nats:2.9-alpine
+      imagePullPolicy: IfNotPresent
+      antiAffinity: true
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8222"
+      podLabels:
+        app: nats
+        component: eventbus
+      metrics:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          interval: 30s
+      jetstream:
+        enabled: true
+        memStorage:
+          enabled: true
+          size: 1Gi
+        fileStorage:
+          enabled: true
+          size: 10Gi
+          storageClassName: gp2
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-events-sa
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: eventbus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argo-events-eventbus-role
+  labels:
+    app: argo-events
+    component: eventbus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["eventsources", "sensors", "eventbus"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-events-eventbus-binding
+  labels:
+    app: argo-events
+    component: eventbus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argo-events-eventbus-role
+subjects:
+  - kind: ServiceAccount
+    name: argo-events-sa
+    namespace: argo-events 

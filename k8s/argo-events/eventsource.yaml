@@ -1,0 +1,156 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: github-eventsource
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: eventsource
+    customer: all
+spec:
+  service:
+    ports:
+      - port: 12000
+        targetPort: 12000
+  github:
+    webhook:
+      endpoint: /github-webhook
+      port: "12000"
+      url: /github-webhook
+      secret:
+        name: github-webhook-secret
+        key: secret
+      events:
+        - push
+        - pull_request
+        - issues
+        - issue_comment
+        - release
+        - create
+        - delete
+        - fork
+        - watch
+        - gollum
+        - page_build
+        - public
+        - status
+        - deployment
+        - deployment_status
+        - repository_vulnerability_alert
+        - repository_import
+        - repository_import_status
+        - security_advisory
+        - team_add
+        - member
+        - membership
+        - organization
+        - org_block
+        - project
+        - project_card
+        - project_column
+        - milestone
+        - label
+        - commit_comment
+        - pull_request_review
+        - pull_request_review_comment
+        - gist
+        - star
+        - public
+        - status
+        - deployment
+        - deployment_status
+        - repository_vulnerability_alert
+        - repository_import
+        - repository_import_status
+        - security_advisory
+        - team_add
+        - member
+        - membership
+        - organization
+        - org_block
+        - project
+        - project_card
+        - project_column
+        - milestone
+        - label
+        - commit_comment
+        - pull_request_review
+        - pull_request_review_comment
+        - gist
+        - star
+      contentType: json
+      insecure: false
+      filter:
+        expression: "body.ref == 'refs/heads/main' || body.ref == 'refs/heads/master'"
+      metadata:
+        customer: "{{ body.repository.owner.login }}"
+        repository: "{{ body.repository.full_name }}"
+        branch: "{{ body.ref }}"
+        commit: "{{ body.head_commit.id }}"
+        author: "{{ body.head_commit.author.name }}"
+        message: "{{ body.head_commit.message }}"
+        timestamp: "{{ body.head_commit.timestamp }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-webhook-secret
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: eventsource
+type: Opaque
+data:
+  secret: <base64-encoded-webhook-secret>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-eventsource-svc
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: eventsource
+spec:
+  ports:
+    - port: 12000
+      targetPort: 12000
+      protocol: TCP
+      name: webhook
+  selector:
+    app: argo-events
+    component: eventsource
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-eventsource-ingress
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: eventsource
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/whitelist-source-range: "0.0.0.0/0"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  tls:
+    - hosts:
+        - argocd-orchestrator.example.com
+      secretName: github-eventsource-tls
+  rules:
+    - host: argocd-orchestrator.example.com
+      http:
+        paths:
+          - path: /github-webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: github-eventsource-svc
+                port:
+                  number: 12000 

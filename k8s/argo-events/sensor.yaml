@@ -1,0 +1,339 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: dependency-sensor
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: sensor
+    customer: all
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+    metadata:
+      labels:
+        app: argo-events
+        component: sensor
+  dependencies:
+    - name: github-webhook-dependency
+      eventSourceName: github-eventsource
+      eventName: github-webhook
+      filters:
+        data:
+          - path: body.ref
+            type: string
+            value: "refs/heads/main"
+          - path: body.repository.full_name
+            type: string
+            value: "rtte/cac-configs"
+        exprLogicalOperator: "and"
+  triggers:
+    - template:
+        name: dependency-resolution-trigger
+        http:
+          url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/webhooks/argo-events"
+          method: POST
+          headers:
+            Content-Type: application/json
+            X-Webhook-Secret: "{{ webhook_secret }}"
+          payload:
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.repository.owner.login
+                dataTemplate: "{{ Input }}"
+              dest: customerId
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.repository.full_name
+                dataTemplate: "{{ Input }}"
+              dest: repository
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.head_commit.id
+                dataTemplate: "{{ Input }}"
+              dest: commitId
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.head_commit.message
+                dataTemplate: "{{ Input }}"
+              dest: commitMessage
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.head_commit.author.name
+                dataTemplate: "{{ Input }}"
+              dest: author
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.head_commit.timestamp
+                dataTemplate: "{{ Input }}"
+              dest: timestamp
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.ref
+                dataTemplate: "{{ Input }}"
+              dest: branch
+            - src:
+                dataTemplate: "DEPLOYMENT_TRIGGER"
+              dest: eventType
+            - src:
+                dataTemplate: "{{ time_iso8601 }}"
+              dest: eventTimestamp
+          timeoutSeconds: 30
+          retryStrategy:
+            steps: 3
+            duration: 10s
+            factor: 2
+            jitter: 0.1
+      rateLimit:
+        requestsPerUnit: 10
+        unit: minute
+    - template:
+        name: sync-wave-trigger
+        http:
+          url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/sync-waves/trigger"
+          method: POST
+          headers:
+            Content-Type: application/json
+            X-Webhook-Secret: "{{ webhook_secret }}"
+          payload:
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.repository.owner.login
+                dataTemplate: "{{ Input }}"
+              dest: customerId
+            - src:
+                dataTemplate: "SYNC_WAVE_TRIGGER"
+              dest: eventType
+            - src:
+                dataTemplate: "{{ time_iso8601 }}"
+              dest: eventTimestamp
+          timeoutSeconds: 60
+          retryStrategy:
+            steps: 3
+            duration: 15s
+            factor: 2
+            jitter: 0.1
+      rateLimit:
+        requestsPerUnit: 5
+        unit: minute
+    - template:
+        name: health-check-trigger
+        http:
+          url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/health/services/check"
+          method: POST
+          headers:
+            Content-Type: application/json
+            X-Webhook-Secret: "{{ webhook_secret }}"
+          payload:
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.repository.owner.login
+                dataTemplate: "{{ Input }}"
+              dest: customerId
+            - src:
+                dataTemplate: "HEALTH_CHECK"
+              dest: eventType
+            - src:
+                dataTemplate: "{{ time_iso8601 }}"
+              dest: eventTimestamp
+          timeoutSeconds: 45
+          retryStrategy:
+            steps: 2
+            duration: 20s
+            factor: 1.5
+            jitter: 0.1
+      rateLimit:
+        requestsPerUnit: 20
+        unit: minute
+    - template:
+        name: rollback-trigger
+        http:
+          url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/rollback/trigger"
+          method: POST
+          headers:
+            Content-Type: application/json
+            X-Webhook-Secret: "{{ webhook_secret }}"
+          payload:
+            - src:
+                dependencyName: github-webhook-dependency
+                dataKey: body.repository.owner.login
+                dataTemplate: "{{ Input }}"
+              dest: customerId
+            - src:
+                dataTemplate: "ROLLBACK_TRIGGER"
+              dest: eventType
+            - src:
+                dataTemplate: "{{ time_iso8601 }}"
+              dest: eventTimestamp
+          timeoutSeconds: 90
+          retryStrategy:
+            steps: 2
+            duration: 30s
+            factor: 1.5
+            jitter: 0.1
+      rateLimit:
+        requestsPerUnit: 3
+        unit: minute
+  errorOnFailedRound: false
+  replicas: 3
+  revisionHistoryLimit: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sensor-config
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: sensor
+data:
+  webhook_secret: "{{ ARGO_EVENTS_WEBHOOK_SECRET }}"
+  argocd_server_url: "https://argocd.example.com"
+  argocd_username: "admin"
+  orchestrator_url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080"
+  health_check_interval: "30s"
+  sync_wave_timeout: "300s"
+  max_retries: "3"
+  retry_delay: "30s"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dependency-sensor
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: sensor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: argo-events
+      component: sensor
+  template:
+    metadata:
+      labels:
+        app: argo-events
+        component: sensor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argo-events-sa
+      containers:
+        - name: sensor
+          image: argoproj/sensor:v1.8.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics
+          env:
+            - name: ARGO_EVENTS_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-secrets
+                  key: argo-events-webhook-secret
+            - name: ARGOCD_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sensor-config
+                  key: argocd_server_url
+            - name: ARGOCD_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: sensor-config
+                  key: argocd_username
+            - name: ARGOCD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-secrets
+                  key: argocd-password
+            - name: ORCHESTRATOR_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sensor-config
+                  key: orchestrator_url
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      nodeSelector: {}
+      tolerations: []
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - argo-events
+                    - key: component
+                      operator: In
+                      values:
+                        - sensor
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dependency-sensor-svc
+  namespace: argo-events
+  labels:
+    app: argo-events
+    component: sensor
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 8081
+      targetPort: 8081
+      protocol: TCP
+      name: metrics
+  selector:
+    app: argo-events
+    component: sensor
+  type: ClusterIP 

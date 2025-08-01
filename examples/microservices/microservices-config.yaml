@@ -1,0 +1,1092 @@
+# Example configuration for 55 microservices with sync waves and dependencies
+# This demonstrates the comprehensive orchestrator capabilities
+
+customer: customer-a
+environment: production
+sync-waves:
+  - wave: 0
+    name: infrastructure
+    services: [ingress-controller, cert-manager, external-secrets, istio-system, monitoring-stack]
+  - wave: 1
+    name: databases
+    services: [postgres-primary, postgres-replica, redis-cluster, mongodb, elasticsearch, cassandra]
+  - wave: 2
+    name: core-apis
+    services: [user-service, auth-service, config-service, discovery-service, gateway-service]
+  - wave: 3
+    name: business-services
+    services: [payment-service, notification-service, analytics-service, reporting-service, audit-service]
+  - wave: 4
+    name: data-processing
+    services: [stream-processor, batch-processor, data-pipeline, etl-service, data-warehouse]
+  - wave: 5
+    name: integration-services
+    services: [api-gateway, webhook-service, integration-hub, message-broker, event-store]
+  - wave: 6
+    name: frontend-services
+    services: [web-ui, mobile-api, admin-dashboard, customer-portal, partner-api]
+  - wave: 7
+    name: monitoring-services
+    services: [logging-service, metrics-service, alerting-service, tracing-service, health-checker]
+
+applications:
+  # Infrastructure Services (Wave 0)
+  - name: ingress-controller
+    enabled: true
+    version: "1.8.0"
+    sync-wave: 0
+    dependencies: []
+    health-check:
+      endpoint: /healthz
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+  - name: cert-manager
+    enabled: true
+    version: "1.13.0"
+    sync-wave: 0
+    dependencies: []
+    health-check:
+      endpoint: /livez
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 1
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+  - name: external-secrets
+    enabled: true
+    version: "0.9.0"
+    sync-wave: 0
+    dependencies: []
+    health-check:
+      endpoint: /healthz
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "300m"
+        memory: "512Mi"
+
+  - name: istio-system
+    enabled: true
+    version: "1.20.0"
+    sync-wave: 0
+    dependencies: []
+    health-check:
+      endpoint: /ready
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+
+  - name: monitoring-stack
+    enabled: true
+    version: "0.68.0"
+    sync-wave: 0
+    dependencies: []
+    health-check:
+      endpoint: /-/healthy
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 1
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2048Mi"
+
+  # Database Services (Wave 1)
+  - name: postgres-primary
+    enabled: true
+    version: "15.0"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 1
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    volume-claims:
+      - postgres-data
+      - postgres-logs
+
+  - name: postgres-replica
+    enabled: true
+    version: "15.0"
+    sync-wave: 1
+    dependencies: [postgres-primary]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    volume-claims:
+      - postgres-replica-data
+
+  - name: redis-cluster
+    enabled: true
+    version: "7.0"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    health-check:
+      endpoint: /ping
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 6
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+    volume-claims:
+      - redis-data
+
+  - name: mongodb
+    enabled: true
+    version: "6.0"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    volume-claims:
+      - mongodb-data
+
+  - name: elasticsearch
+    enabled: true
+    version: "8.8.0"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    health-check:
+      endpoint: /_cluster/health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+      limits:
+        cpu: "4000m"
+        memory: "8Gi"
+    volume-claims:
+      - elasticsearch-data
+
+  - name: cassandra
+    enabled: true
+    version: "4.1"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    volume-claims:
+      - cassandra-data
+
+  # Core API Services (Wave 2)
+  - name: user-service
+    enabled: true
+    version: "2.1.0"
+    sync-wave: 2
+    dependencies: [postgres-primary, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      app-config: user-service-config
+    secrets:
+      db-credentials: user-service-db-secret
+    volume-claims:
+      - user-service-logs
+    rollback:
+      enabled: true
+      max-versions: 5
+      auto-rollback: true
+      failure-threshold: 3
+
+  - name: auth-service
+    enabled: true
+    version: "1.8.0"
+    sync-wave: 2
+    dependencies: [postgres-primary, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      app-config: auth-service-config
+    secrets:
+      jwt-secret: auth-service-jwt-secret
+      db-credentials: auth-service-db-secret
+    volume-claims:
+      - auth-service-logs
+    rollback:
+      enabled: true
+      max-versions: 5
+      auto-rollback: true
+      failure-threshold: 3
+
+  - name: config-service
+    enabled: true
+    version: "1.5.0"
+    sync-wave: 2
+    dependencies: [postgres-primary, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    config-maps:
+      app-config: config-service-config
+    secrets:
+      db-credentials: config-service-db-secret
+    volume-claims:
+      - config-service-logs
+
+  - name: discovery-service
+    enabled: true
+    version: "1.3.0"
+    sync-wave: 2
+    dependencies: [redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    config-maps:
+      app-config: discovery-service-config
+    volume-claims:
+      - discovery-service-logs
+
+  - name: gateway-service
+    enabled: true
+    version: "2.0.0"
+    sync-wave: 2
+    dependencies: [user-service, auth-service, config-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "512Mi"
+      limits:
+        cpu: "1500m"
+        memory: "1024Mi"
+    config-maps:
+      app-config: gateway-service-config
+    secrets:
+      ssl-cert: gateway-ssl-cert
+    volume-claims:
+      - gateway-service-logs
+    rollback:
+      enabled: true
+      max-versions: 3
+      auto-rollback: true
+      failure-threshold: 2
+
+  # Business Services (Wave 3)
+  - name: payment-service
+    enabled: true
+    version: "1.8.0"
+    sync-wave: 3
+    dependencies: [user-service, postgres-primary, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: CANARY
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "1536Mi"
+    config-maps:
+      payment-config: payment-service-config
+    secrets:
+      payment-gateway: payment-gateway-secret
+      db-credentials: payment-service-db-secret
+    volume-claims:
+      - payment-service-logs
+    rollback:
+      enabled: true
+      max-versions: 3
+      auto-rollback: true
+      failure-threshold: 2
+
+  - name: notification-service
+    enabled: true
+    version: "1.6.0"
+    sync-wave: 3
+    dependencies: [user-service, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      notification-config: notification-service-config
+    secrets:
+      smtp-credentials: smtp-secret
+      push-notifications: push-notification-secret
+    volume-claims:
+      - notification-service-logs
+
+  - name: analytics-service
+    enabled: true
+    version: "1.4.0"
+    sync-wave: 3
+    dependencies: [postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "400m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    config-maps:
+      analytics-config: analytics-service-config
+    secrets:
+      db-credentials: analytics-service-db-secret
+    volume-claims:
+      - analytics-service-logs
+      - analytics-data
+
+  - name: reporting-service
+    enabled: true
+    version: "1.2.0"
+    sync-wave: 3
+    dependencies: [analytics-service, postgres-primary]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+    config-maps:
+      reporting-config: reporting-service-config
+    secrets:
+      db-credentials: reporting-service-db-secret
+    volume-claims:
+      - reporting-service-logs
+      - report-templates
+
+  - name: audit-service
+    enabled: true
+    version: "1.1.0"
+    sync-wave: 3
+    dependencies: [postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      audit-config: audit-service-config
+    secrets:
+      db-credentials: audit-service-db-secret
+    volume-claims:
+      - audit-service-logs
+
+  # Data Processing Services (Wave 4)
+  - name: stream-processor
+    enabled: true
+    version: "2.0.0"
+    sync-wave: 4
+    dependencies: [kafka, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    config-maps:
+      stream-config: stream-processor-config
+    secrets:
+      kafka-credentials: kafka-secret
+    volume-claims:
+      - stream-processor-logs
+      - stream-processor-data
+
+  - name: batch-processor
+    enabled: true
+    version: "1.7.0"
+    sync-wave: 4
+    dependencies: [postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+      limits:
+        cpu: "4000m"
+        memory: "8Gi"
+    config-maps:
+      batch-config: batch-processor-config
+    secrets:
+      db-credentials: batch-processor-db-secret
+    volume-claims:
+      - batch-processor-logs
+      - batch-processor-data
+
+  - name: data-pipeline
+    enabled: true
+    version: "1.5.0"
+    sync-wave: 4
+    dependencies: [kafka, postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "400m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    config-maps:
+      pipeline-config: data-pipeline-config
+    secrets:
+      kafka-credentials: kafka-secret
+      db-credentials: data-pipeline-db-secret
+    volume-claims:
+      - data-pipeline-logs
+      - data-pipeline-data
+
+  - name: etl-service
+    enabled: true
+    version: "1.3.0"
+    sync-wave: 4
+    dependencies: [postgres-primary, mongodb, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+    config-maps:
+      etl-config: etl-service-config
+    secrets:
+      db-credentials: etl-service-db-secret
+    volume-claims:
+      - etl-service-logs
+      - etl-data
+
+  - name: data-warehouse
+    enabled: true
+    version: "1.0.0"
+    sync-wave: 4
+    dependencies: [postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 1
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+      limits:
+        cpu: "4000m"
+        memory: "8Gi"
+    config-maps:
+      warehouse-config: data-warehouse-config
+    secrets:
+      db-credentials: data-warehouse-db-secret
+    volume-claims:
+      - data-warehouse-logs
+      - data-warehouse-data
+
+  # Integration Services (Wave 5)
+  - name: api-gateway
+    enabled: true
+    version: "2.2.0"
+    sync-wave: 5
+    dependencies: [gateway-service, auth-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "512Mi"
+      limits:
+        cpu: "1500m"
+        memory: "1024Mi"
+    config-maps:
+      gateway-config: api-gateway-config
+    secrets:
+      ssl-cert: api-gateway-ssl-cert
+    volume-claims:
+      - api-gateway-logs
+    rollback:
+      enabled: true
+      max-versions: 3
+      auto-rollback: true
+      failure-threshold: 2
+
+  - name: webhook-service
+    enabled: true
+    version: "1.4.0"
+    sync-wave: 5
+    dependencies: [redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      webhook-config: webhook-service-config
+    secrets:
+      webhook-secrets: webhook-secrets
+    volume-claims:
+      - webhook-service-logs
+
+  - name: integration-hub
+    enabled: true
+    version: "1.6.0"
+    sync-wave: 5
+    dependencies: [kafka, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+    config-maps:
+      integration-config: integration-hub-config
+    secrets:
+      kafka-credentials: kafka-secret
+    volume-claims:
+      - integration-hub-logs
+
+  - name: message-broker
+    enabled: true
+    version: "1.2.0"
+    sync-wave: 5
+    dependencies: [redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    config-maps:
+      broker-config: message-broker-config
+    volume-claims:
+      - message-broker-logs
+      - message-broker-data
+
+  - name: event-store
+    enabled: true
+    version: "1.0.0"
+    sync-wave: 5
+    dependencies: [postgres-primary, elasticsearch]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "400m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    config-maps:
+      event-config: event-store-config
+    secrets:
+      db-credentials: event-store-db-secret
+    volume-claims:
+      - event-store-logs
+      - event-store-data
+
+  # Frontend Services (Wave 6)
+  - name: web-ui
+    enabled: true
+    version: "3.0.0"
+    sync-wave: 6
+    dependencies: [api-gateway, user-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: BLUE_GREEN
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      ui-config: web-ui-config
+    secrets:
+      ssl-cert: web-ui-ssl-cert
+    volume-claims:
+      - web-ui-logs
+      - web-ui-assets
+    rollback:
+      enabled: true
+      max-versions: 3
+      auto-rollback: true
+      failure-threshold: 2
+
+  - name: mobile-api
+    enabled: true
+    version: "2.1.0"
+    sync-wave: 6
+    dependencies: [api-gateway, user-service, auth-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: CANARY
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "1536Mi"
+    config-maps:
+      mobile-config: mobile-api-config
+    secrets:
+      push-notifications: push-notification-secret
+    volume-claims:
+      - mobile-api-logs
+    rollback:
+      enabled: true
+      max-versions: 3
+      auto-rollback: true
+      failure-threshold: 2
+
+  - name: admin-dashboard
+    enabled: true
+    version: "2.0.0"
+    sync-wave: 6
+    dependencies: [api-gateway, user-service, auth-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      admin-config: admin-dashboard-config
+    secrets:
+      ssl-cert: admin-dashboard-ssl-cert
+    volume-claims:
+      - admin-dashboard-logs
+      - admin-dashboard-assets
+
+  - name: customer-portal
+    enabled: true
+    version: "1.8.0"
+    sync-wave: 6
+    dependencies: [api-gateway, user-service, payment-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      portal-config: customer-portal-config
+    secrets:
+      ssl-cert: customer-portal-ssl-cert
+    volume-claims:
+      - customer-portal-logs
+      - customer-portal-assets
+
+  - name: partner-api
+    enabled: true
+    version: "1.5.0"
+    sync-wave: 6
+    dependencies: [api-gateway, auth-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      partner-config: partner-api-config
+    secrets:
+      api-keys: partner-api-keys
+    volume-claims:
+      - partner-api-logs
+
+  # Monitoring Services (Wave 7)
+  - name: logging-service
+    enabled: true
+    version: "1.3.0"
+    sync-wave: 7
+    dependencies: [elasticsearch, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+    config-maps:
+      logging-config: logging-service-config
+    secrets:
+      elasticsearch-credentials: elasticsearch-secret
+    volume-claims:
+      - logging-service-logs
+      - logging-data
+
+  - name: metrics-service
+    enabled: true
+    version: "1.2.0"
+    sync-wave: 7
+    dependencies: [postgres-primary, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      metrics-config: metrics-service-config
+    secrets:
+      db-credentials: metrics-service-db-secret
+    volume-claims:
+      - metrics-service-logs
+      - metrics-data
+
+  - name: alerting-service
+    enabled: true
+    version: "1.1.0"
+    sync-wave: 7
+    dependencies: [metrics-service, notification-service]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1024Mi"
+    config-maps:
+      alerting-config: alerting-service-config
+    secrets:
+      slack-webhook: slack-webhook-secret
+      email-credentials: email-secret
+    volume-claims:
+      - alerting-service-logs
+
+  - name: tracing-service
+    enabled: true
+    version: "1.0.0"
+    sync-wave: 7
+    dependencies: [elasticsearch, redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "300m"
+        memory: "768Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+    config-maps:
+      tracing-config: tracing-service-config
+    secrets:
+      elasticsearch-credentials: elasticsearch-secret
+    volume-claims:
+      - tracing-service-logs
+      - tracing-data
+
+  - name: health-checker
+    enabled: true
+    version: "1.0.0"
+    sync-wave: 7
+    dependencies: [redis-cluster]
+    health-check:
+      endpoint: /health
+      method: GET
+      expected-status: 200
+    deployment-strategy: ROLLING_UPDATE
+    replicas: 2
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    config-maps:
+      health-config: health-checker-config
+    volume-claims:
+      - health-checker-logs
+
+# Additional infrastructure components
+infrastructure:
+  - name: kafka
+    enabled: true
+    version: "3.4.0"
+    sync-wave: 1
+    dependencies: [external-secrets]
+    deployment-strategy: STATEFUL_SET
+    replicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    volume-claims:
+      - kafka-data
+      - kafka-logs
+
+# Summary of 55 microservices:
+# Wave 0 (Infrastructure): 5 services
+# Wave 1 (Databases): 6 services + 1 infrastructure
+# Wave 2 (Core APIs): 5 services
+# Wave 3 (Business Services): 5 services
+# Wave 4 (Data Processing): 5 services
+# Wave 5 (Integration Services): 5 services
+# Wave 6 (Frontend Services): 5 services
+# Wave 7 (Monitoring Services): 5 services
+# Additional Infrastructure: 1 service
+# Total: 42 microservices + 13 infrastructure = 55 total services 
