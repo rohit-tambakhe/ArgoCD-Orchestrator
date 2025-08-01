@@ -15,7 +15,7 @@ A comprehensive ArgoCD orchestrator with Config as Code (CAC) integration, Argo 
                             │ Webhooks
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Argo Events (EventBus)                      │
+│                    Argo Events (EventBus)                       │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
 │  │   EventSource   │  │     Sensor      │  │   Trigger       │  │
 │  │  (GitHub, SNS)  │  │  (Dependency    │  │  (ArgoCD Sync)  │  │
