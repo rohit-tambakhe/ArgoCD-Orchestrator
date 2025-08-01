@@ -27,8 +27,9 @@ A comprehensive ArgoCD orchestrator with Config as Code (CAC) integration, Argo 
 ┌─────────────────────────────────────────────────────────────────┐
 │              ArgoCD Orchestrator (Java + Spring Boot)           │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │ CAC Manager     │  │ Dependency      │  │ GitHub Integration│  │
-│  │                 │  │ Engine          │  │                 │  │
+│  │ CAC Manager     │  │ Dependency      │  │ GitHub          │  │
+│  │                 │  │ Engine          │  │ Integration     │  │
+│  │                 │  │                 │  │                 │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
 │  │ ApplicationSet  │  │ Sync Wave       │  │ State Manager   │  │
@@ -254,19 +255,54 @@ argocd-orchestrator/
 │       ├── grafana-dashboards.yaml
 │       └── alertmanager-config.yaml
 ├── examples/                            # Example configurations
-│   ├── cac-configs/
-│   ├── microservices/                   # 55 microservice definitions
-│   │   ├── user-service/
-│   │   ├── auth-service/
-│   │   ├── payment-service/
-│   │   └── ... (52 more services)
+│   ├── helm-charts/                     # Helm charts for customers
+│   │   ├── customers/                   # Customer-specific values
+│   │   │   ├── customer-a/
+│   │   │   │   ├── values.yaml          # 8 configMaps + 55 microservices
+│   │   │   │   ├── Chart.yaml
+│   │   │   │   ├── templates/
+│   │   │   │   │   ├── _helpers.tpl     # Sync wave & dependency conditions
+│   │   │   │   │   ├── deployment.yaml
+│   │   │   │   │   ├── service.yaml
+│   │   │   │   │   ├── configmap.yaml
+│   │   │   │   │   └── secret.yaml
+│   │   │   │   └── .helmignore
+│   │   │   ├── customer-b/
+│   │   │   └── ... (more customers)
+│   │   └── base/                        # Base chart templates
+│   │       ├── Chart.yaml
+│   │       ├── values.yaml
+│   │       └── templates/
+│   │           ├── _helpers.tpl
+│   │           ├── deployment.yaml
+│   │           ├── service.yaml
+│   │           ├── configmap.yaml
+│   │           └── secret.yaml
+│   ├── cac-configs/                     # Legacy configs (deprecated)
 │   └── dependency-graphs/               # Dependency graph examples
 │       ├── customer-a-dependencies.yaml
 │       └── customer-b-dependencies.yaml
-├── scripts/                             # Utility scripts
-│   ├── deploy.sh
-│   ├── health-check.sh
-│   └── rollback.sh
+├── k8s/                                 # Kubernetes manifests
+│   ├── argocd/                          # ArgoCD configuration
+│   │   ├── applicationset.yaml          # ApplicationSet for customers
+│   │   ├── project.yaml                 # ArgoCD project
+│   │   └── rbac.yaml                    # RBAC configuration
+│   ├── statefulset.yaml                 # Orchestrator deployment
+│   ├── argo-events/                     # Argo Events configuration
+│   │   ├── eventbus.yaml
+│   │   ├── eventsource.yaml
+│   │   ├── sensor.yaml
+│   │   └── trigger.yaml
+│   ├── sync-waves/                      # Sync wave definitions
+│   │   ├── infrastructure.yaml
+│   │   ├── databases.yaml
+│   │   ├── core-apis.yaml
+│   │   ├── business-services.yaml
+│   │   └── frontend.yaml
+│   └── monitoring/                      # Monitoring configuration
+│       ├── prometheus-rules.yaml
+│       ├── grafana-dashboards.yaml
+│       └── alertmanager-config.yaml
 └── pom.xml
 ```
 
@@ -286,14 +322,13 @@ argocd:
     enabled: true
     namespace: argocd
 
-# CAC Configuration
-cac:
-  repository-url: https://github.com/rtte/cac-configs
-  branch: main
-  config-path: customers
+# Helm Configuration
+helm:
+  charts-path: examples/helm-charts/customers
+  base-chart: examples/helm-charts/base
   validation:
     enabled: true
-    schema-path: schemas/customer-config.yaml
+    schema-path: schemas/helm-values.yaml
 
 # Argo Events Configuration
 argo-events:
@@ -349,26 +384,286 @@ monitoring:
     slack-webhook: ${SLACK_WEBHOOK_URL}
 ```
 
-### Enhanced Customer Configuration (CAC)
+### Helm Values Configuration
 
-Customer configurations now include microservice dependencies and sync waves:
+Each customer has a dedicated `values.yaml` file with 8 configMaps and 55+ microservices:
 
 ```yaml
-# customers/customer-a/config.yaml
-customer: customer-a
-environment: production
-sync-waves:
-  - wave: 0
-    name: infrastructure
-    services: [ingress, cert-manager, external-secrets]
-  - wave: 1
-    name: databases
-    services: [postgres, redis, mongodb, elasticsearch]
-  - wave: 2
-    name: core-apis
-    services: [user-service, auth-service, config-service]
-  - wave: 3
-    name: business-services
+# examples/helm-charts/customers/customer-a/values.yaml
+global:
+  customerId: customer-a
+  environment: production
+  imageTag: "v2.1.0"  # Updated by CI/CD pipeline
+  namespace: customer-a-production
+
+# 8 ConfigMaps per customer
+configMaps:
+  app-config: customer-a-app-config
+  database-config: customer-a-database-config
+  cache-config: customer-a-cache-config
+  messaging-config: customer-a-messaging-config
+  monitoring-config: customer-a-monitoring-config
+  security-config: customer-a-security-config
+  integration-config: customer-a-integration-config
+  feature-flags: customer-a-feature-flags
+
+# Microservices organized by sync waves
+microservices:
+  infrastructure:
+    sync-wave: 0
+    services:
+      - name: ingress-controller
+        enabled: true
+        image: nginx/ingress-controller:v1.8.0
+        replicas: 2
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+      - name: cert-manager
+        enabled: true
+        image: jetstack/cert-manager:v1.12.0
+        replicas: 1
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+      - name: external-secrets
+        enabled: true
+        image: external-secrets/external-secrets:v0.8.0
+        replicas: 1
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+  databases:
+    sync-wave: 1
+    services:
+      - name: postgres
+        enabled: true
+        image: postgres:15-alpine
+        dependencies: []
+        replicas: 1
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        volumeClaims:
+          - name: postgres-data
+            size: 20Gi
+            storageClass: gp2
+
+      - name: redis
+        enabled: true
+        image: redis:7-alpine
+        dependencies: []
+        replicas: 1
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeClaims:
+          - name: redis-data
+            size: 10Gi
+            storageClass: gp2
+
+  core-apis:
+    sync-wave: 2
+    services:
+      - name: user-service
+        enabled: true
+        image: rtte/user-service:{{ .Values.global.imageTag }}
+        dependencies: [postgres, redis]
+        healthCheck:
+          endpoint: /health
+          method: GET
+          expectedStatus: 200
+          timeoutSeconds: 10
+          intervalSeconds: 30
+        deploymentStrategy: ROLLING_UPDATE
+        replicas: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1024Mi"
+        configMaps:
+          - name: app-config
+            key: customer-a-user-service-config
+        secrets:
+          - name: db-credentials
+            key: customer-a-db-secret
+        volumeClaims:
+          - name: logs
+            size: 5Gi
+            storageClass: gp2
+        rollback:
+          enabled: true
+          maxVersions: 5
+          autoRollback: true
+          failureThreshold: 3
+
+      - name: auth-service
+        enabled: true
+        image: rtte/auth-service:{{ .Values.global.imageTag }}
+        dependencies: [postgres, redis]
+        healthCheck:
+          endpoint: /health
+          method: GET
+          expectedStatus: 200
+        deploymentStrategy: ROLLING_UPDATE
+        replicas: 2
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1024Mi"
+        configMaps:
+          - name: app-config
+            key: customer-a-auth-service-config
+        secrets:
+          - name: db-credentials
+            key: customer-a-db-secret
+
+      # ... 53 more microservices with similar configuration
+
+  business-services:
+    sync-wave: 3
+    services:
+      - name: payment-service
+        enabled: true
+        image: rtte/payment-service:{{ .Values.global.imageTag }}
+        dependencies: [user-service, notification-service]
+        healthCheck:
+          endpoint: /health
+          method: GET
+          expectedStatus: 200
+        deploymentStrategy: BLUE_GREEN
+        replicas: 2
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "768Mi"
+          limits:
+            cpu: "1500m"
+            memory: "1536Mi"
+        configMaps:
+          - name: payment-config
+            key: customer-a-payment-config
+        secrets:
+          - name: payment-gateway
+            key: customer-a-payment-gateway-secret
+        rollback:
+          enabled: true
+          maxVersions: 3
+          autoRollback: true
+          failureThreshold: 2
+
+      # ... more business services
+
+  frontend:
+    sync-wave: 4
+    services:
+      - name: web-ui
+        enabled: true
+        image: rtte/web-ui:{{ .Values.global.imageTag }}
+        dependencies: [user-service, payment-service]
+        healthCheck:
+          endpoint: /health
+          method: GET
+          expectedStatus: 200
+        deploymentStrategy: ROLLING_UPDATE
+        replicas: 2
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        configMaps:
+          - name: app-config
+            key: customer-a-web-ui-config
+```
+
+### Helm Chart Templates
+
+The `_helpers.tpl` file contains conditions for sync waves and dependencies:
+
+```yaml
+# examples/helm-charts/customers/_helpers.tpl
+{{/*
+  Sync wave conditions for deployment ordering
+*/}}
+{{- define "syncWaveCondition" -}}
+{{- $syncWave := .syncWave | default 0 -}}
+{{- if eq $syncWave 0 -}}
+  argocd.argoproj.io/sync-wave: "0"
+{{- else if eq $syncWave 1 -}}
+  argocd.argoproj.io/sync-wave: "1"
+{{- else if eq $syncWave 2 -}}
+  argocd.argoproj.io/sync-wave: "2"
+{{- else if eq $syncWave 3 -}}
+  argocd.argoproj.io/sync-wave: "3"
+{{- else if eq $syncWave 4 -}}
+  argocd.argoproj.io/sync-wave: "4"
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Dependency conditions
+*/}}
+{{- define "dependencyCondition" -}}
+{{- if .dependencies -}}
+  argocd.argoproj.io/sync-options: "Prune=false"
+  orchestrator.rtte.com/dependencies: '{{ .dependencies | toJson }}'
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Health check conditions
+*/}}
+{{- define "healthCheckCondition" -}}
+{{- if .healthCheck -}}
+  orchestrator.rtte.com/health-check: '{{ .healthCheck | toJson }}'
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Deployment strategy conditions
+*/}}
+{{- define "deploymentStrategyCondition" -}}
+{{- if eq .deploymentStrategy "BLUE_GREEN" -}}
+  orchestrator.rtte.com/deployment-strategy: "blue-green"
+{{- else if eq .deploymentStrategy "CANARY" -}}
+  orchestrator.rtte.com/deployment-strategy: "canary"
+{{- else -}}
+  orchestrator.rtte.com/deployment-strategy: "rolling-update"
+{{- end -}}
+{{- end -}}
+```
     services: [payment-service, notification-service, analytics-service]
   - wave: 4
     name: frontend
@@ -482,73 +777,450 @@ applications:
 
 ## 🔄 Enhanced Workflow
 
-### Adding a New Customer with 55 Microservices
+### **Helm-Based Architecture Overview**
 
-1. **Create customer configuration**
-   ```bash
-   mkdir -p cac-configs/customers/new-customer
-   ```
+The ArgoCD Orchestrator uses a **Helm Charts + ApplicationSet** approach for managing 55+ microservices:
 
-2. **Generate microservice definitions**
-   ```bash
-   ./scripts/generate-microservices.sh new-customer
-   ```
+```
+CI/CD Pipeline → Helm Charts (values.yaml) → ArgoCD ApplicationSet → Argo Workflows → Argo Orchestrator
+```
 
-3. **Add config.yaml with dependencies**
+### **Customer Configuration Structure**
+
+Each customer has a dedicated Helm values file with 8 configMaps:
+
+```yaml
+# examples/helm-charts/customers/customer-a/values.yaml
+global:
+  customerId: customer-a
+  environment: production
+  imageTag: "v2.1.0"  # Updated by CI/CD
+
+# 8 ConfigMaps per customer
+configMaps:
+  app-config: customer-a-app-config
+  database-config: customer-a-database-config
+  cache-config: customer-a-cache-config
+  messaging-config: customer-a-messaging-config
+  monitoring-config: customer-a-monitoring-config
+  security-config: customer-a-security-config
+  integration-config: customer-a-integration-config
+  feature-flags: customer-a-feature-flags
+
+# Microservices with sync waves
+microservices:
+  infrastructure:
+    sync-wave: 0
+    services:
+      - name: ingress-controller
+        enabled: true
+        image: nginx/ingress-controller:v1.8.0
+      - name: cert-manager
+        enabled: true
+        image: jetstack/cert-manager:v1.12.0
+      - name: external-secrets
+        enabled: true
+        image: external-secrets/external-secrets:v0.8.0
+
+  databases:
+    sync-wave: 1
+    services:
+      - name: postgres
+        enabled: true
+        image: postgres:15-alpine
+        dependencies: []
+      - name: redis
+        enabled: true
+        image: redis:7-alpine
+        dependencies: []
+
+  core-apis:
+    sync-wave: 2
+    services:
+      - name: user-service
+        enabled: true
+        image: rtte/user-service:{{ .Values.global.imageTag }}
+        dependencies: [postgres, redis]
+        healthCheck:
+          endpoint: /health
+          method: GET
+          expectedStatus: 200
+      - name: auth-service
+        enabled: true
+        image: rtte/auth-service:{{ .Values.global.imageTag }}
+        dependencies: [postgres, redis]
+      # ... 53 more microservices
+
+  business-services:
+    sync-wave: 3
+    services:
+      - name: payment-service
+        enabled: true
+        image: rtte/payment-service:{{ .Values.global.imageTag }}
+        dependencies: [user-service, notification-service]
+        deploymentStrategy: BLUE_GREEN
+      # ... more business services
+
+  frontend:
+    sync-wave: 4
+    services:
+      - name: web-ui
+        enabled: true
+        image: rtte/web-ui:{{ .Values.global.imageTag }}
+        dependencies: [user-service, payment-service]
+```
+
+### **CI/CD Pipeline Integration with Argo Workflows**
+
+1. **Build and Tag Generation**
    ```yaml
-   customer: new-customer
-   environment: production
-   sync-waves:
-     - wave: 0
-       name: infrastructure
-       services: [ingress, cert-manager, external-secrets]
-     # ... define all 55 microservices with proper sync waves
+   # .github/workflows/build-and-deploy.yml
+   name: Build and Deploy
+   on:
+     push:
+       branches: [main]
+   
+   jobs:
+     build:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v3
+         - name: Build and Push Images
+           run: |
+             # Build microservices
+             docker build -t rtte/user-service:${{ github.sha }} ./services/user-service
+             docker build -t rtte/payment-service:${{ github.sha }} ./services/payment-service
+             # ... build all 55 microservices
+             
+             # Push to registry
+             docker push rtte/user-service:${{ github.sha }}
+             docker push rtte/payment-service:${{ github.sha }}
+   
+     update-helm-values:
+       needs: build
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v3
+         - name: Update Helm Values
+           run: |
+             # Update image tags in all customer values.yaml files
+             for customer in examples/helm-charts/customers/*/; do
+               sed -i "s/imageTag: \".*\"/imageTag: \"${{ github.sha }}\"/g" $customer/values.yaml
+             done
+         
+         - name: Commit and Push Changes
+           run: |
+             git config user.name "GitHub Actions"
+             git config user.email "actions@github.com"
+             git add examples/helm-charts/customers/*/values.yaml
+             git commit -m "Update image tags to ${{ github.sha }}"
+             git push
+   
+     trigger-argo-workflow:
+       needs: update-helm-values
+       runs-on: ubuntu-latest
+       steps:
+         - name: Trigger Argo Workflow
+           run: |
+             # Trigger Argo Workflow for deployment
+             kubectl create -f k8s/argo-workflows/deployment-workflow.yaml \
+               --dry-run=client -o yaml | \
+               kubectl apply -f -
    ```
 
-4. **Validate dependencies**
+2. **Argo Workflow Execution**
    ```bash
-   curl -X POST http://localhost:8080/api/v1/dependencies/validate \
-     -H "Content-Type: application/json" \
-     -d @cac-configs/customers/new-customer/config.yaml
+   # Trigger workflow manually
+   kubectl create -f k8s/argo-workflows/deployment-workflow.yaml
+   
+   # Monitor workflow progress
+   kubectl get workflows -n argo-workflows
+   kubectl logs -f -l workflows.argoproj.io/workflow=comprehensive-deployment-workflow
    ```
 
-5. **Commit and push**
+### **ArgoCD ApplicationSet Configuration**
+
+```yaml
+# k8s/argocd/applicationset.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: customer-applications
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/rtte/argo-orchestrator
+        targetRevision: main
+        directories:
+          - path: examples/helm-charts/customers/*/
+  
+  template:
+    metadata:
+      name: '{{name}}-applications'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/rtte/argo-orchestrator
+        targetRevision: main
+        path: '{{path}}'
+        helm:
+          valueFiles:
+            - values.yaml
+          parameters:
+            - name: customerId
+              value: '{{name}}'
+      
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{name}}-production'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+      
+      # Argo Orchestrator integration
+      annotations:
+        orchestrator.rtte.com/customer-id: '{{name}}'
+        orchestrator.rtte.com/sync-waves: "true"
+        orchestrator.rtte.com/dependency-management: "true"
+```
+
+### **Helm Chart Structure with _helpers.tpl**
+
+```yaml
+# examples/helm-charts/customers/_helpers.tpl
+{{/*
+  Sync wave conditions for deployment ordering
+*/}}
+{{- define "syncWaveCondition" -}}
+{{- $syncWave := .syncWave | default 0 -}}
+{{- if eq $syncWave 0 -}}
+  argocd.argoproj.io/sync-wave: "0"
+{{- else if eq $syncWave 1 -}}
+  argocd.argoproj.io/sync-wave: "1"
+{{- else if eq $syncWave 2 -}}
+  argocd.argoproj.io/sync-wave: "2"
+{{- else if eq $syncWave 3 -}}
+  argocd.argoproj.io/sync-wave: "3"
+{{- else if eq $syncWave 4 -}}
+  argocd.argoproj.io/sync-wave: "4"
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Dependency conditions
+*/}}
+{{- define "dependencyCondition" -}}
+{{- if .dependencies -}}
+  argocd.argoproj.io/sync-options: "Prune=false"
+  orchestrator.rtte.com/dependencies: '{{ .dependencies | toJson }}'
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Health check conditions
+*/}}
+{{- define "healthCheckCondition" -}}
+{{- if .healthCheck -}}
+  orchestrator.rtte.com/health-check: '{{ .healthCheck | toJson }}'
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Deployment strategy conditions
+*/}}
+{{- define "deploymentStrategyCondition" -}}
+{{- if eq .deploymentStrategy "BLUE_GREEN" -}}
+  orchestrator.rtte.com/deployment-strategy: "blue-green"
+{{- else if eq .deploymentStrategy "CANARY" -}}
+  orchestrator.rtte.com/deployment-strategy: "canary"
+{{- else -}}
+  orchestrator.rtte.com/deployment-strategy: "rolling-update"
+{{- end -}}
+{{- end -}}
+```
+
+### **Adding a New Customer**
+
+1. **Create Customer Helm Values**
    ```bash
-   git add cac-configs/customers/new-customer/
-   git commit -m "Add new-customer with 55 microservices"
+   # Create new customer directory
+   mkdir -p examples/helm-charts/customers/customer-b
+   
+   # Copy template values
+   cp examples/helm-charts/customers/customer-a/values.yaml examples/helm-charts/customers/customer-b/values.yaml
+   
+   # Customize for customer-b
+   sed -i 's/customer-a/customer-b/g' examples/helm-charts/customers/customer-b/values.yaml
+   ```
+
+2. **Trigger Argo Workflow**
+   ```bash
+   # Create workflow with customer parameters
+   kubectl create -f - <<EOF
+   apiVersion: argoproj.io/v1alpha1
+   kind: Workflow
+   metadata:
+     name: deploy-customer-b
+     namespace: argo-workflows
+   spec:
+     arguments:
+       parameters:
+         - name: customer-id
+           value: "customer-b"
+         - name: environment
+           value: "production"
+         - name: image-tag
+           value: "latest"
+     workflowTemplateRef:
+       name: deployment-workflow-template
+   EOF
+   ```
+
+3. **Monitor Deployment**
+   ```bash
+   # Monitor workflow progress
+   kubectl get workflows -n argo-workflows deploy-customer-b
+   
+   # Check Argo Rollouts
+   kubectl get rollouts -n customer-b-production
+   
+   # Monitor sync waves
+   kubectl logs -f -l app=argocd-orchestrator -n argocd-orchestrator
+   ```
+
+### **Updating Microservice Configuration**
+
+1. **Update values.yaml**
+   ```yaml
+   # examples/helm-charts/customers/customer-a/values.yaml
+   microservices:
+     business-services:
+       sync-wave: 3
+       services:
+         - name: payment-service
+           enabled: true
+           image: rtte/payment-service:{{ .Values.global.imageTag }}
+           dependencies: [user-service, notification-service, audit-service]  # Added dependency
+           deploymentStrategy: CANARY  # Changed strategy
+   ```
+
+2. **CI/CD Triggers Update**
+   ```bash
+   # Commit and push changes
+   git add examples/helm-charts/customers/customer-a/values.yaml
+   git commit -m "Update payment-service dependencies and strategy"
    git push origin main
    ```
 
-6. **Monitor deployment**
+3. **ArgoCD Syncs Automatically**
    ```bash
-   kubectl get applications -n argocd | grep new-customer
-   kubectl logs -n argocd-orchestrator -l app=argocd-orchestrator -f
+   # ArgoCD detects changes and syncs
+   kubectl get applications -n argocd customer-a-applications -o yaml
    ```
 
-### Updating Microservice Dependencies
+### **Argo Workflows and Argo Rollouts Integration**
 
-1. **Update dependency configuration**
-   ```bash
-   vim cac-configs/customers/customer-a/config.yaml
-   ```
+The deployment process uses **Argo Workflows** for orchestration and **Argo Rollouts** for advanced deployment strategies:
 
-2. **Validate dependency changes**
-   ```bash
-   curl -X POST http://localhost:8080/api/v1/dependencies/validate \
-     -H "Content-Type: application/json" \
-     -d @cac-configs/customers/customer-a/config.yaml
-   ```
+#### **Argo Workflows Pipeline**
+```yaml
+# k8s/argo-workflows/deployment-workflow.yaml
+spec:
+  templates:
+    - name: deployment-pipeline
+      steps:
+        - - name: validate-prerequisites
+        - - name: setup-argo-events
+        - - name: deploy-orchestrator
+        - - name: validate-helm-values
+        - - name: trigger-application-set
+        - - name: monitor-sync-waves
+        - - name: validate-deployment
+        - - name: notify-completion
+```
 
-3. **Commit changes**
-   ```bash
-   git commit -m "Update customer-a: add new dependency for payment-service"
-   git push origin main
-   ```
+#### **Argo Rollouts with _helpers.tpl Conditions**
+```yaml
+# examples/helm-charts/customers/templates/rollout.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  annotations:
+    {{- include "syncWaveCondition" $wave | nindent 4 }}
+    {{- include "dependencyCondition" $service | nindent 4 }}
+    {{- include "healthCheckCondition" $service | nindent 4 }}
+    {{- include "deploymentStrategyCondition" $service | nindent 4 }}
+spec:
+  strategy:
+    {{- if eq $service.deploymentStrategy "BLUE_GREEN" }}
+    blueGreen:
+      activeService: {{ $.Values.global.customerId }}-{{ $service.name }}-active
+      previewService: {{ $.Values.global.customerId }}-{{ $service.name }}-preview
+      autoPromotionEnabled: false
+    {{- else if eq $service.deploymentStrategy "CANARY" }}
+    canary:
+      steps:
+        - setWeight: 25
+        - pause: {duration: 30s}
+        - setWeight: 50
+        - pause: {duration: 30s}
+        - setWeight: 75
+        - pause: {duration: 30s}
+        - setWeight: 100
+    {{- end }}
+```
 
-4. **Monitor sync wave execution**
-   ```bash
-   kubectl logs -n argocd-orchestrator -l app=argocd-orchestrator -f
-   ```
+#### **Analysis Templates for Health Checks**
+```yaml
+# k8s/argo-rollouts/analysis-template.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+spec:
+  metrics:
+    - name: success-rate
+      successCondition: result[0] >= 0.95
+      provider:
+        prometheus:
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}", status=~"2.."}[5m])) 
+            / 
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+```
+
+### **Argo Orchestrator Integration**
+
+The Argo Orchestrator monitors ArgoCD applications and manages:
+
+- **Sync Wave Orchestration**: Ensures proper deployment order
+- **Dependency Validation**: Validates service dependencies
+- **Health Check Management**: Monitors service health
+- **Rollback Management**: Handles failed deployments
+- **Multi-tenant Isolation**: Manages customer environments
+
+```bash
+# Check orchestrator status
+curl -X GET http://localhost:8080/api/v1/orchestrator/status
+
+# Monitor customer deployments
+curl -X GET http://localhost:8080/api/v1/customers/customer-a/deployments
+
+# Check sync wave progress
+curl -X GET http://localhost:8080/api/v1/customers/customer-a/sync-waves
+
+# Monitor Argo Rollouts
+kubectl get rollouts -n customer-a-production
+kubectl argo rollouts get rollout customer-a-user-service -n customer-a-production
+```
 
 ## 📊 Enhanced Monitoring
 
@@ -1112,10 +1784,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For support and questions:
 
-- **Email**: dev@rtte.com
-- **Issues**: [GitHub Issues](https://github.com/rtte/argocd-orchestrator/issues)
-- **Documentation**: [Project Wiki](https://github.com/rtte/argocd-orchestrator/wiki)
-- **Slack**: [rtte-dev](https://rtte.slack.com/archives/argocd-orchestrator)
+- **Email**: rohit.tambakhe@live.com
 
 ---
 

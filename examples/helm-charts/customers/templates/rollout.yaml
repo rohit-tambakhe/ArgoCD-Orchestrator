@@ -1,0 +1,227 @@
+{{- if .Values.microservices }}
+{{- range $waveName, $wave := .Values.microservices }}
+{{- range $service := $wave.services }}
+{{- if $service.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ $.Values.global.customerId }}-{{ $service.name }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: {{ $service.name }}
+    customer: {{ $.Values.global.customerId }}
+    wave: {{ $wave.sync-wave }}
+  annotations:
+    {{- include "syncWaveCondition" $wave | nindent 4 }}
+    {{- include "dependencyCondition" $service | nindent 4 }}
+    {{- include "healthCheckCondition" $service | nindent 4 }}
+    {{- include "deploymentStrategyCondition" $service | nindent 4 }}
+    orchestrator.rtte.com/customer-id: {{ $.Values.global.customerId }}
+    orchestrator.rtte.com/service-name: {{ $service.name }}
+    orchestrator.rtte.com/sync-wave: {{ $wave.sync-wave | quote }}
+spec:
+  replicas: {{ $service.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ $service.name }}
+      customer: {{ $.Values.global.customerId }}
+  
+  template:
+    metadata:
+      labels:
+        app: {{ $service.name }}
+        customer: {{ $.Values.global.customerId }}
+        version: {{ $.Values.global.imageTag }}
+    spec:
+      {{- if $service.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $service.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      
+      containers:
+        - name: {{ $service.name }}
+          image: {{ $service.image }}
+          ports:
+            {{- if $service.ports }}
+            {{- range $service.ports }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: {{ .protocol | default "TCP" }}
+            {{- end }}
+            {{- else }}
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- end }}
+          
+          {{- if $service.healthCheck }}
+          livenessProbe:
+            httpGet:
+              path: {{ $service.healthCheck.endpoint }}
+              port: {{ $service.healthCheck.port | default 8080 }}
+            initialDelaySeconds: {{ $service.healthCheck.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ $service.healthCheck.intervalSeconds | default 10 }}
+            timeoutSeconds: {{ $service.healthCheck.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $service.healthCheck.failureThreshold | default 3 }}
+          
+          readinessProbe:
+            httpGet:
+              path: {{ $service.healthCheck.endpoint }}
+              port: {{ $service.healthCheck.port | default 8080 }}
+            initialDelaySeconds: {{ $service.healthCheck.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ $service.healthCheck.intervalSeconds | default 5 }}
+            timeoutSeconds: {{ $service.healthCheck.timeoutSeconds | default 3 }}
+            failureThreshold: {{ $service.healthCheck.failureThreshold | default 3 }}
+          {{- end }}
+          
+          {{- if $service.resources }}
+          resources:
+            {{- if $service.resources.requests }}
+            requests:
+              {{- if $service.resources.requests.cpu }}
+              cpu: {{ $service.resources.requests.cpu }}
+              {{- end }}
+              {{- if $service.resources.requests.memory }}
+              memory: {{ $service.resources.requests.memory }}
+              {{- end }}
+            {{- end }}
+            {{- if $service.resources.limits }}
+            limits:
+              {{- if $service.resources.limits.cpu }}
+              cpu: {{ $service.resources.limits.cpu }}
+              {{- end }}
+              {{- if $service.resources.limits.memory }}
+              memory: {{ $service.resources.limits.memory }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          
+          {{- if $service.env }}
+          env:
+            {{- range $service.env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- end }}
+              {{- if .valueFrom }}
+              valueFrom:
+                {{- if .valueFrom.secretKeyRef }}
+                secretKeyRef:
+                  name: {{ .valueFrom.secretKeyRef.name }}
+                  key: {{ .valueFrom.secretKeyRef.key }}
+                {{- end }}
+                {{- if .valueFrom.configMapKeyRef }}
+                configMapKeyRef:
+                  name: {{ .valueFrom.configMapKeyRef.name }}
+                  key: {{ .valueFrom.configMapKeyRef.key }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          
+          {{- if $service.configMaps }}
+          envFrom:
+            {{- range $service.configMaps }}
+            - configMapRef:
+                name: {{ .key }}
+            {{- end }}
+          {{- end }}
+          
+          {{- if $service.volumeMounts }}
+          volumeMounts:
+            {{- range $service.volumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+      
+      {{- if $service.volumes }}
+      volumes:
+        {{- range $service.volumes }}
+        - name: {{ .name }}
+          {{- if .configMap }}
+          configMap:
+            name: {{ .configMap.name }}
+          {{- end }}
+          {{- if .secret }}
+          secret:
+            secretName: {{ .secret.secretName }}
+          {{- end }}
+          {{- if .persistentVolumeClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .persistentVolumeClaim.claimName }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      
+      {{- if $service.securityContext }}
+      securityContext:
+        {{- toYaml $service.securityContext | nindent 8 }}
+      {{- end }}
+  
+  {{- if eq $service.deploymentStrategy "BLUE_GREEN" }}
+  strategy:
+    blueGreen:
+      activeService: {{ $.Values.global.customerId }}-{{ $service.name }}-active
+      previewService: {{ $.Values.global.customerId }}-{{ $service.name }}-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: success-rate
+            clusterScope: false
+        args:
+          - name: service-name
+            value: {{ $service.name }}
+      postPromotionAnalysis:
+        templates:
+          - templateName: success-rate
+            clusterScope: false
+        args:
+          - name: service-name
+            value: {{ $service.name }}
+  
+  {{- else if eq $service.deploymentStrategy "CANARY" }}
+  strategy:
+    canary:
+      steps:
+        - setWeight: 25
+        - pause: {duration: 30s}
+        - setWeight: 50
+        - pause: {duration: 30s}
+        - setWeight: 75
+        - pause: {duration: 30s}
+        - setWeight: 100
+      analysis:
+        templates:
+          - templateName: success-rate
+            clusterScope: false
+        args:
+          - name: service-name
+            value: {{ $service.name }}
+  
+  {{- else }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  {{- end }}
+  
+  {{- if $service.rollback.enabled }}
+  rollbackWindow:
+    deployment: 5m
+    postPromotionAnalysis: 5m
+  
+  progressDeadlineSeconds: {{ $service.rollback.rollbackTimeoutSeconds | default 300 }}
+  {{- end }}
+
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }} 

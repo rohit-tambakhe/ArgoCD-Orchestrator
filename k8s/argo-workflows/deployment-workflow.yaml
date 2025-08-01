@@ -1,0 +1,262 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: comprehensive-deployment-workflow
+  namespace: argo-workflows
+  labels:
+    app: argo-orchestrator
+    workflow-type: deployment
+spec:
+  serviceAccountName: argo-workflow-sa
+  entrypoint: deployment-pipeline
+  arguments:
+    parameters:
+      - name: customer-id
+        value: "customer-a"
+      - name: environment
+        value: "production"
+      - name: image-tag
+        value: "latest"
+      - name: sync-waves-enabled
+        value: "true"
+      - name: dependency-validation-enabled
+        value: "true"
+  
+  templates:
+    - name: deployment-pipeline
+      steps:
+        - - name: validate-prerequisites
+            template: validate-prerequisites
+        - - name: setup-argo-events
+            template: setup-argo-events
+        - - name: deploy-orchestrator
+            template: deploy-orchestrator
+        - - name: validate-helm-values
+            template: validate-helm-values
+        - - name: trigger-application-set
+            template: trigger-application-set
+        - - name: monitor-sync-waves
+            template: monitor-sync-waves
+        - - name: validate-deployment
+            template: validate-deployment
+        - - name: notify-completion
+            template: notify-completion
+
+    - name: validate-prerequisites
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🔍 Validating prerequisites..."
+            
+            # Check if ArgoCD is installed
+            kubectl get namespace argocd
+            if [ $? -ne 0 ]; then
+              echo "❌ ArgoCD namespace not found"
+              exit 1
+            fi
+            
+            # Check if Argo Events is installed
+            kubectl get namespace argo-events
+            if [ $? -ne 0 ]; then
+              echo "❌ Argo Events namespace not found"
+              exit 1
+            fi
+            
+            # Check if Argo Workflows is installed
+            kubectl get namespace argo-workflows
+            if [ $? -ne 0 ]; then
+              echo "❌ Argo Workflows namespace not found"
+              exit 1
+            fi
+            
+            # Check if Argo Rollouts is installed
+            kubectl get namespace argo-rollouts
+            if [ $? -ne 0 ]; then
+              echo "❌ Argo Rollouts namespace not found"
+              exit 1
+            fi
+            
+            echo "✅ All prerequisites validated successfully"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: setup-argo-events
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🚀 Setting up Argo Events components..."
+            
+            # Apply EventBus
+            kubectl apply -f k8s/argo-events/eventbus.yaml
+            
+            # Apply EventSource
+            kubectl apply -f k8s/argo-events/eventsource.yaml
+            
+            # Apply Sensor
+            kubectl apply -f k8s/argo-events/sensor.yaml
+            
+            # Wait for components to be ready
+            kubectl wait --for=condition=ready pod -l app=argo-events -n argo-events --timeout=300s
+            
+            echo "✅ Argo Events setup completed"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: deploy-orchestrator
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🎯 Deploying ArgoCD Orchestrator..."
+            
+            # Create namespace if not exists
+            kubectl create namespace argocd-orchestrator --dry-run=client -o yaml | kubectl apply -f -
+            
+            # Apply StatefulSet
+            kubectl apply -f k8s/statefulset.yaml
+            
+            # Wait for orchestrator to be ready
+            kubectl wait --for=condition=ready pod -l app=argocd-orchestrator -n argocd-orchestrator --timeout=600s
+            
+            echo "✅ Orchestrator deployment completed"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: validate-helm-values
+      container:
+        image: alpine/helm:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🔍 Validating Helm values for customer {{workflow.parameters.customer-id}}..."
+            
+            # Validate Helm chart values
+            helm lint examples/helm-charts/customers/{{workflow.parameters.customer-id}}/
+            
+            # Validate dependencies
+            helm template examples/helm-charts/customers/{{workflow.parameters.customer-id}}/ | grep -E "argocd.argoproj.io/sync-wave|orchestrator.rtte.com/dependencies"
+            
+            echo "✅ Helm values validation completed"
+        workingDir: /workspace
+
+    - name: trigger-application-set
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🚀 Triggering ApplicationSet for customer {{workflow.parameters.customer-id}}..."
+            
+            # Apply ApplicationSet
+            kubectl apply -f k8s/argocd/applicationset.yaml
+            
+            # Wait for applications to be created
+            kubectl wait --for=condition=established crd applicationsets.argoproj.io --timeout=60s
+            
+            # Check if applications are created
+            kubectl get applications -n argocd | grep {{workflow.parameters.customer-id}}
+            
+            echo "✅ ApplicationSet triggered successfully"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: monitor-sync-waves
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "📊 Monitoring sync waves for customer {{workflow.parameters.customer-id}}..."
+            
+            # Monitor sync wave progress
+            for wave in 0 1 2 3 4; do
+              echo "🔄 Monitoring sync wave $wave..."
+              
+              # Check sync wave status via orchestrator API
+              response=$(curl -s -X GET "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/customers/{{workflow.parameters.customer-id}}/sync-waves/$wave/status")
+              
+              # Wait for wave completion
+              while [[ $(echo $response | jq -r '.status') != "COMPLETED" ]]; do
+                echo "⏳ Sync wave $wave in progress..."
+                sleep 30
+                response=$(curl -s -X GET "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/customers/{{workflow.parameters.customer-id}}/sync-waves/$wave/status")
+              done
+              
+              echo "✅ Sync wave $wave completed"
+            done
+            
+            echo "✅ All sync waves completed successfully"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: validate-deployment
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🔍 Validating deployment for customer {{workflow.parameters.customer-id}}..."
+            
+            # Check all pods are running
+            kubectl get pods -n {{workflow.parameters.customer-id}}-{{workflow.parameters.environment}} --no-headers | grep -v "Running\|Completed" | wc -l | grep -q "0"
+            
+            # Check services are healthy
+            kubectl get services -n {{workflow.parameters.customer-id}}-{{workflow.parameters.environment}}
+            
+            # Check ArgoCD application status
+            kubectl get applications -n argocd | grep {{workflow.parameters.customer-id}}
+            
+            echo "✅ Deployment validation completed"
+        env:
+          - name: KUBECONFIG
+            value: /root/.kube/config
+
+    - name: notify-completion
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "🎉 Deployment completed successfully!"
+            echo "Customer: {{workflow.parameters.customer-id}}"
+            echo "Environment: {{workflow.parameters.environment}}"
+            echo "Image Tag: {{workflow.parameters.image-tag}}"
+            
+            # Send notification (if configured)
+            if [ ! -z "$SLACK_WEBHOOK_URL" ]; then
+              curl -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"🎉 Deployment completed for {{workflow.parameters.customer-id}} in {{workflow.parameters.environment}}\"}" \
+                $SLACK_WEBHOOK_URL
+            fi
+
+  # Workflow-level configurations
+  workflowTemplateRef:
+    name: deployment-workflow-template
+  
+  # Retry strategy
+  retryStrategy:
+    limit: 3
+    retryPolicy: "Always"
+  
+  # Timeout
+  activeDeadlineSeconds: 3600  # 1 hour
+  
+  # Pod GC
+  podGC:
+    strategy: OnWorkflowCompletion
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000 

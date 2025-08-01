@@ -1,0 +1,144 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: argo-rollouts
+  labels:
+    app: argo-orchestrator
+    template-type: analysis
+spec:
+  args:
+    - name: service-name
+      description: "Name of the service to analyze"
+    - name: customer-id
+      description: "Customer ID for the service"
+      value: "{{workflow.parameters.customer-id}}"
+  
+  metrics:
+    - name: success-rate
+      interval: 30s
+      count: 5
+      successCondition: result[0] >= 0.95
+      failureCondition: result[0] < 0.95
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}", status=~"2.."}[5m])) 
+            / 
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+    
+    - name: latency
+      interval: 30s
+      count: 5
+      successCondition: result[0] <= 0.5
+      failureCondition: result[0] > 0.5
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[5m])) by (le))
+    
+    - name: error-rate
+      interval: 30s
+      count: 5
+      successCondition: result[0] <= 0.05
+      failureCondition: result[0] > 0.05
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}", status=~"5.."}[5m])) 
+            / 
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: health-check
+  namespace: argo-rollouts
+  labels:
+    app: argo-orchestrator
+    template-type: analysis
+spec:
+  args:
+    - name: service-name
+      description: "Name of the service to check"
+    - name: health-endpoint
+      description: "Health check endpoint"
+      value: "/health"
+    - name: port
+      description: "Service port"
+      value: "8080"
+  
+  metrics:
+    - name: health-check
+      interval: 10s
+      count: 3
+      successCondition: result[0] == 200
+      failureCondition: result[0] != 200
+      failureLimit: 2
+      provider:
+        job:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: health-check
+                    image: curlimages/curl:latest
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        response=$(curl -s -o /dev/null -w "%{http_code}" http://{{args.service-name}}.{{args.service-name}}.svc.cluster.local:{{args.port}}{{args.health-endpoint}})
+                        echo $response
+                restartPolicy: Never
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: dependency-check
+  namespace: argo-rollouts
+  labels:
+    app: argo-orchestrator
+    template-type: analysis
+spec:
+  args:
+    - name: service-name
+      description: "Name of the service to check"
+    - name: dependencies
+      description: "List of dependencies to check"
+  
+  metrics:
+    - name: dependency-health
+      interval: 30s
+      count: 3
+      successCondition: result[0] == 1
+      failureCondition: result[0] == 0
+      failureLimit: 2
+      provider:
+        job:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: dependency-check
+                    image: bitnami/kubectl:latest
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        # Check if all dependencies are healthy
+                        for dep in {{args.dependencies}}; do
+                          if ! kubectl get pods -l app=$dep --field-selector=status.phase=Running | grep -q $dep; then
+                            echo "0"
+                            exit 0
+                          fi
+                        done
+                        echo "1"
+                restartPolicy: Never 
