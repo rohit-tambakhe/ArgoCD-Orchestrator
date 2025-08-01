@@ -18,12 +18,8 @@ import jakarta.validation.constraints.NotBlank;
 public class KubernetesConfig {
 
     @Bean
-    public KubernetesClient kubernetesClient(KubernetesProperties properties) {
-        return new KubernetesClientBuilder()
-                .withConfigPath(properties.getConfigPath())
-                .withMasterUrl(properties.getMasterUrl())
-                .withTrustCerts(properties.isTrustCertificates())
-                .build();
+    public KubernetesClient kubernetesClient() {
+        return new KubernetesClientBuilder().build();
     }
 
     @Data

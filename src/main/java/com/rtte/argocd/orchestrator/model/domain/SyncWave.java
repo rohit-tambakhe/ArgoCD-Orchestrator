@@ -155,7 +155,7 @@ public class SyncWave {
         if (deployedServices.equals(totalServices) && healthyServices.equals(totalServices)) {
             this.status = SyncWaveStatus.COMPLETED;
             this.endTime = java.time.LocalDateTime.now();
-        } else if (failedServices > 0 && (failedServices + healthyServices).equals(totalServices)) {
+        } else if (failedServices > 0 && (failedServices + healthyServices) == totalServices) {
             this.status = SyncWaveStatus.FAILED;
             this.endTime = java.time.LocalDateTime.now();
         }
@@ -169,7 +169,7 @@ public class SyncWave {
             return false;
         }
         
-        java.time.LocalDateTime timeoutTime = startTime.plusSeconds(timeoutSeconds);
+        java.time.LocalDateTime timeoutTime = startTime.plusSeconds(timeoutSeconds.longValue());
         return java.time.LocalDateTime.now().isAfter(timeoutTime);
     }
     

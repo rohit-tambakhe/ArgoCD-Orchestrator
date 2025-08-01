@@ -8,13 +8,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 /**
- * Main application class for the ArgoCD Orchestrator
+ * Main Spring Boot application class for ArgoCD Orchestrator
  * 
  * This orchestrator provides comprehensive management of ArgoCD applications
- * with Config as Code (CAC) integration for multi-tenant deployments on AWS EKS.
- * 
- * @author rtte
- * @version 1.0.0
+ * with Config as Code (CAC) integration, multi-tenant support, and advanced
+ * deployment orchestration capabilities.
  */
 @SpringBootApplication
 @EnableCaching
