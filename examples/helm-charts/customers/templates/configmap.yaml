@@ -1,0 +1,28 @@
+{{- if .Values.configMaps }}
+{{- range $configMapName, $configMap := .Values.configMaps }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Values.global.customerId }}-{{ $configMapName }}-config
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    {{- include "customer-services.labels" $ | nindent 4 }}
+    {{- include "customer-services.customerLabels" $ | nindent 4 }}
+    config-type: {{ $configMapName }}
+    customer: {{ $.Values.global.customerId }}
+  annotations:
+    orchestrator.rtte.com/customer-id: {{ $.Values.global.customerId }}
+    orchestrator.rtte.com/config-type: {{ $configMapName }}
+    orchestrator.rtte.com/config-version: {{ $.Values.global.imageTag }}
+data:
+  {{- range $key, $value := $configMap.data }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- if $configMap.binaryData }}
+  {{- range $key, $value := $configMap.binaryData }}
+  {{ $key }}: {{ $value }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }} 

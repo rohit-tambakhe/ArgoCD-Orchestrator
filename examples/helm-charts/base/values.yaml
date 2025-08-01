@@ -1,0 +1,412 @@
+# Base Services Helm Chart Values
+# This chart provides shared infrastructure and common services
+
+global:
+  environment: "production"
+  imagePullPolicy: "Always"
+  imagePullSecrets:
+    - name: "docker-registry-secret"
+
+# Shared infrastructure services
+infrastructure:
+  # API Gateway
+  apiGateway:
+    enabled: true
+    image: "nginx:alpine"
+    replicas: 2
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    serviceType: "LoadBalancer"
+    ports:
+      - name: http
+        port: 80
+        targetPort: 80
+      - name: https
+        port: 443
+        targetPort: 443
+    configMaps:
+      - name: "gateway-config"
+        data:
+          NGINX_CONFIG: |
+            events {
+              worker_connections 1024;
+            }
+            http {
+              upstream backend {
+                server customer-a-user-service:8080;
+                server customer-a-order-service:8080;
+                server customer-a-payment-service:8080;
+              }
+              server {
+                listen 80;
+                location / {
+                  proxy_pass http://backend;
+                }
+              }
+            }
+
+  # Load Balancer
+  loadBalancer:
+    enabled: true
+    image: "haproxy:alpine"
+    replicas: 2
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+    serviceType: "LoadBalancer"
+    ports:
+      - name: http
+        port: 80
+        targetPort: 80
+      - name: stats
+        port: 8404
+        targetPort: 8404
+
+  # Service Mesh (Istio)
+  istio:
+    enabled: true
+    gateway:
+      enabled: true
+      image: "istio/proxyv2:1.18.0"
+      replicas: 2
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+    ingressGateway:
+      enabled: true
+      image: "istio/proxyv2:1.18.0"
+      replicas: 2
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+
+# Monitoring stack
+monitoring:
+  enabled: true
+  
+  # Prometheus
+  prometheus:
+    enabled: true
+    image: "prom/prometheus:v2.45.0"
+    replicas: 1
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    storage:
+      size: "10Gi"
+      storageClass: "gp2"
+    configMaps:
+      - name: "prometheus-config"
+        data:
+          prometheus.yml: |
+            global:
+              scrape_interval: 15s
+            scrape_configs:
+              - job_name: 'kubernetes-pods'
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                    action: keep
+                    regex: true
+
+  # Grafana
+  grafana:
+    enabled: true
+    image: "grafana/grafana:9.5.0"
+    replicas: 1
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    storage:
+      size: "5Gi"
+      storageClass: "gp2"
+    configMaps:
+      - name: "grafana-config"
+        data:
+          grafana.ini: |
+            [server]
+            http_port = 3000
+            [security]
+            admin_user = admin
+            admin_password = admin
+
+  # Jaeger (Distributed Tracing)
+  jaeger:
+    enabled: true
+    image: "jaegertracing/all-in-one:1.47"
+    replicas: 1
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    storage:
+      size: "5Gi"
+      storageClass: "gp2"
+
+# Logging stack
+logging:
+  enabled: true
+  
+  # Elasticsearch
+  elasticsearch:
+    enabled: true
+    image: "docker.elastic.co/elasticsearch/elasticsearch:8.8.0"
+    replicas: 3
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    storage:
+      size: "20Gi"
+      storageClass: "gp2"
+    configMaps:
+      - name: "elasticsearch-config"
+        data:
+          elasticsearch.yml: |
+            cluster.name: argo-orchestrator
+            node.name: ${HOSTNAME}
+            network.host: 0.0.0.0
+            discovery.seed_hosts: elasticsearch-0,elasticsearch-1,elasticsearch-2
+
+  # Kibana
+  kibana:
+    enabled: true
+    image: "docker.elastic.co/kibana/kibana:8.8.0"
+    replicas: 1
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+    configMaps:
+      - name: "kibana-config"
+        data:
+          kibana.yml: |
+            server.port: 5601
+            server.host: 0.0.0.0
+            elasticsearch.hosts: ["http://elasticsearch:9200"]
+
+  # Fluentd
+  fluentd:
+    enabled: true
+    image: "fluent/fluentd-kubernetes-daemonset:v1.14-debian-elasticsearch7-1"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+    configMaps:
+      - name: "fluentd-config"
+        data:
+          fluent.conf: |
+            <source>
+              @type tail
+              path /var/log/containers/*.log
+              pos_file /var/log/fluentd-containers.log.pos
+              tag kubernetes.*
+              read_from_head true
+              <parse>
+                @type json
+                time_format %Y-%m-%dT%H:%M:%S.%NZ
+              </parse>
+            </source>
+            <match kubernetes.**>
+              @type elasticsearch
+              host elasticsearch
+              port 9200
+              logstash_format true
+              logstash_prefix k8s
+            </match>
+
+# Security services
+security:
+  enabled: true
+  
+  # Vault (Secrets Management)
+  vault:
+    enabled: true
+    image: "vault:1.14.0"
+    replicas: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    storage:
+      size: "10Gi"
+      storageClass: "gp2"
+    configMaps:
+      - name: "vault-config"
+        data:
+          vault.json: |
+            {
+              "storage": {
+                "file": {
+                  "path": "/vault/file"
+                }
+              },
+              "listener": {
+                "tcp": {
+                  "address": "0.0.0.0:8200",
+                  "tls_disable": true
+                }
+              },
+              "ui": true
+            }
+
+  # Cert Manager
+  certManager:
+    enabled: true
+    image: "quay.io/jetstack/cert-manager-controller:v1.12.0"
+    replicas: 1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+# Network policies
+networkPolicies:
+  enabled: true
+  
+  # Default deny all
+  defaultDeny:
+    enabled: true
+    policy:
+      podSelector: {}
+      policyTypes:
+        - Ingress
+        - Egress
+  
+  # Allow monitoring
+  monitoring:
+    enabled: true
+    policy:
+      podSelector:
+        matchLabels:
+          app: prometheus
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app: grafana
+          ports:
+            - protocol: TCP
+              port: 9090
+
+# Resource quotas
+resourceQuotas:
+  enabled: true
+  
+  # Default quota for customer namespaces
+  default:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+    requests.storage: "100Gi"
+    persistentvolumeclaims: "10"
+    services: "20"
+    services.loadbalancers: "5"
+
+# Limit ranges
+limitRanges:
+  enabled: true
+  
+  # Default limits for pods
+  default:
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    max:
+      cpu: "2000m"
+      memory: "4Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+
+# Service accounts
+serviceAccounts:
+  enabled: true
+  
+  # Default service account for customer services
+  default:
+    name: "customer-service-account"
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/customer-service-role"
+  
+  # Monitoring service account
+  monitoring:
+    name: "monitoring-service-account"
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/monitoring-role"
+
+# RBAC
+rbac:
+  enabled: true
+  
+  # Cluster roles
+  clusterRoles:
+    - name: "customer-service-role"
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "endpoints"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "replicasets"]
+          verbs: ["get", "list", "watch"]
+  
+  # Cluster role bindings
+  clusterRoleBindings:
+    - name: "customer-service-binding"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "customer-service-role"
+      subjects:
+        - kind: ServiceAccount
+          name: "customer-service-account"
+          namespace: "default" 

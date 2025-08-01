@@ -1,0 +1,221 @@
+{{- if .Values.microservices }}
+{{- range $waveName, $wave := .Values.microservices }}
+{{- range $service := $wave.services }}
+{{- if $service.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Values.global.customerId }}-{{ $service.name }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    {{- include "customer-services.labels" $ | nindent 4 }}
+    {{- include "customer-services.customerLabels" $ | nindent 4 }}
+    app: {{ $service.name }}
+    customer: {{ $.Values.global.customerId }}
+    wave: {{ $wave.sync-wave }}
+  annotations:
+    {{- include "syncWaveCondition" $wave | nindent 4 }}
+    {{- include "dependencyCondition" $service | nindent 4 }}
+    {{- include "healthCheckCondition" $service | nindent 4 }}
+    {{- include "deploymentStrategyCondition" $service | nindent 4 }}
+    {{- include "rollbackCondition" $service | nindent 4 }}
+    {{- include "serviceMeshAnnotations" $service | nindent 4 }}
+    {{- include "monitoringAnnotations" $ | nindent 4 }}
+    {{- include "circuitBreakerAnnotations" $ | nindent 4 }}
+    orchestrator.rtte.com/customer-id: {{ $.Values.global.customerId }}
+    orchestrator.rtte.com/service-name: {{ $service.name }}
+    orchestrator.rtte.com/sync-wave: {{ $wave.sync-wave | quote }}
+spec:
+  replicas: {{ $service.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ $service.name }}
+      customer: {{ $.Values.global.customerId }}
+  template:
+    metadata:
+      labels:
+        app: {{ $service.name }}
+        customer: {{ $.Values.global.customerId }}
+        version: {{ $.Values.global.imageTag }}
+      annotations:
+        {{- include "serviceMeshAnnotations" $service | nindent 8 }}
+        {{- include "monitoringAnnotations" $ | nindent 8 }}
+        {{- include "circuitBreakerAnnotations" $ | nindent 8 }}
+    spec:
+      {{- include "securityContext" $ | nindent 6 }}
+      {{- if $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.Values.global.imagePullSecrets }}
+        - name: {{ .name }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ $service.name }}
+          image: {{ $service.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $service.healthCheck.port | default 8080 }}
+              protocol: TCP
+          {{- if $service.healthCheck }}
+          livenessProbe:
+            httpGet:
+              path: {{ $service.healthCheck.endpoint }}
+              port: {{ $service.healthCheck.port | default 8080 }}
+            initialDelaySeconds: {{ $service.healthCheck.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ $service.healthCheck.intervalSeconds | default 10 }}
+            timeoutSeconds: {{ $service.healthCheck.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $service.healthCheck.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: {{ $service.healthCheck.endpoint }}
+              port: {{ $service.healthCheck.port | default 8080 }}
+            initialDelaySeconds: {{ $service.healthCheck.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ $service.healthCheck.intervalSeconds | default 5 }}
+            timeoutSeconds: {{ $service.healthCheck.timeoutSeconds | default 3 }}
+            failureThreshold: {{ $service.healthCheck.failureThreshold | default 3 }}
+          {{- end }}
+          {{- include "resourceRequirements" $service.resources | nindent 10 }}
+          {{- if $service.configMaps }}
+          {{- include "configMapVolumeMounts" $service.configMaps | nindent 10 }}
+          {{- end }}
+          {{- if $service.secrets }}
+          {{- include "secretVolumeMounts" $service.secrets | nindent 10 }}
+          {{- end }}
+          env:
+            - name: CUSTOMER_ID
+              value: {{ $.Values.global.customerId | quote }}
+            - name: ENVIRONMENT
+              value: {{ $.Values.global.environment | quote }}
+            - name: SERVICE_NAME
+              value: {{ $service.name | quote }}
+            - name: SYNC_WAVE
+              value: {{ $wave.sync-wave | quote }}
+            {{- if $service.dependencies }}
+            - name: DEPENDENCIES
+              value: {{ join "," $service.dependencies | quote }}
+            {{- end }}
+            {{- if $service.healthCheck }}
+            - name: HEALTH_CHECK_ENDPOINT
+              value: {{ $service.healthCheck.endpoint | quote }}
+            - name: HEALTH_CHECK_PORT
+              value: {{ $service.healthCheck.port | default 8080 | quote }}
+            {{- end }}
+            {{- if $service.deploymentStrategy }}
+            - name: DEPLOYMENT_STRATEGY
+              value: {{ $service.deploymentStrategy | quote }}
+            {{- end }}
+            {{- if $service.rollback.enabled }}
+            - name: ROLLBACK_ENABLED
+              value: "true"
+            - name: ROLLBACK_TIMEOUT
+              value: {{ $service.rollback.rollbackTimeoutSeconds | default 300 | quote }}
+            {{- end }}
+            {{- if $.Values.global.circuitBreaker.enabled }}
+            - name: CIRCUIT_BREAKER_ENABLED
+              value: "true"
+            - name: CIRCUIT_BREAKER_THRESHOLD
+              value: {{ $.Values.global.circuitBreaker.threshold | default 5 | quote }}
+            - name: CIRCUIT_BREAKER_TIMEOUT
+              value: {{ $.Values.global.circuitBreaker.timeout | default "30s" | quote }}
+            {{- end }}
+            {{- if $.Values.istio.enabled }}
+            - name: ISTIO_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if $.Values.monitoring.enabled }}
+            - name: METRICS_ENABLED
+              value: "true"
+            - name: PROMETHEUS_URL
+              value: {{ $.Values.configMaps.monitoring-config.data.PROMETHEUS_URL | quote }}
+            {{- end }}
+            {{- if $service.env }}
+            {{- range $key, $value := $service.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $service.envFrom }}
+            {{- range $service.envFrom }}
+            - name: {{ .name }}
+              valueFrom:
+                {{- if .configMapRef }}
+                configMapKeyRef:
+                  name: {{ .configMapRef.name }}
+                  key: {{ .configMapRef.key }}
+                {{- end }}
+                {{- if .secretRef }}
+                secretKeyRef:
+                  name: {{ .secretRef.name }}
+                  key: {{ .secretRef.key }}
+                {{- end }}
+            {{- end }}
+            {{- end }}
+          {{- if $service.command }}
+          command:
+            {{- range $service.command }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if $service.args }}
+          args:
+            {{- range $service.args }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if $service.workingDir }}
+          workingDir: {{ $service.workingDir }}
+          {{- end }}
+          {{- if $service.securityContext }}
+          securityContext:
+            {{- if $service.securityContext.runAsNonRoot }}
+            runAsNonRoot: {{ $service.securityContext.runAsNonRoot }}
+            {{- end }}
+            {{- if $service.securityContext.runAsUser }}
+            runAsUser: {{ $service.securityContext.runAsUser }}
+            {{- end }}
+            {{- if $service.securityContext.capabilities }}
+            capabilities:
+              {{- if $service.securityContext.capabilities.drop }}
+              drop:
+                {{- range $service.securityContext.capabilities.drop }}
+                - {{ . }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+      {{- if $service.nodeSelector }}
+      nodeSelector:
+        {{- toYaml $service.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $service.affinity }}
+      affinity:
+        {{- toYaml $service.affinity | nindent 8 }}
+      {{- end }}
+      {{- if $service.tolerations }}
+      tolerations:
+        {{- toYaml $service.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if $service.volumes }}
+      volumes:
+        {{- toYaml $service.volumes | nindent 8 }}
+      {{- end }}
+  {{- if $service.strategy }}
+  strategy:
+    {{- if eq $service.deploymentStrategy "ROLLING_UPDATE" }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ $service.maxSurge | default "25%" }}
+      maxUnavailable: {{ $service.maxUnavailable | default "25%" }}
+    {{- else if eq $service.deploymentStrategy "RECREATE" }}
+    type: Recreate
+    {{- end }}
+  {{- end }}
+  {{- if $service.progressDeadlineSeconds }}
+  progressDeadlineSeconds: {{ $service.progressDeadlineSeconds }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }} 

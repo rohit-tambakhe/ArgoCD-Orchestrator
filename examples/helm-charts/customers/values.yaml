@@ -1,0 +1,542 @@
+# Customer Services Helm Chart Values
+# This file is updated by CI/CD systems to trigger deployments
+
+global:
+  customerId: "customer-a"
+  namespace: "customer-a"
+  environment: "production"
+  imageTag: "latest"
+  imagePullPolicy: "Always"
+  imagePullSecrets:
+    - name: "docker-registry-secret"
+  
+  # Sync wave configuration
+  syncWaves:
+    enabled: true
+    timeout: 300s
+    retryAttempts: 3
+  
+  # Dependency management
+  dependencyValidation:
+    enabled: true
+    timeout: 60s
+  
+  # Health check configuration
+  healthChecks:
+    enabled: true
+    interval: 30s
+    timeout: 10s
+    failureThreshold: 3
+  
+  # Deployment strategy defaults
+  deploymentStrategy: "ROLLING_UPDATE" # ROLLING_UPDATE, BLUE_GREEN, CANARY, RECREATE
+  
+  # Resource defaults
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# Customer-specific configuration maps (8 configMaps per customer)
+configMaps:
+  app-config:
+    data:
+      APP_ENV: "{{ .Values.global.environment }}"
+      LOG_LEVEL: "INFO"
+      METRICS_ENABLED: "true"
+  
+  database-config:
+    data:
+      DB_HOST: "postgresql.customer-a.svc.cluster.local"
+      DB_PORT: "5432"
+      DB_NAME: "customer_a_db"
+      DB_POOL_SIZE: "10"
+  
+  redis-config:
+    data:
+      REDIS_HOST: "redis.customer-a.svc.cluster.local"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ""
+  
+  messaging-config:
+    data:
+      KAFKA_BROKERS: "kafka.customer-a.svc.cluster.local:9092"
+      KAFKA_TOPIC_PREFIX: "customer-a"
+      RABBITMQ_HOST: "rabbitmq.customer-a.svc.cluster.local"
+      RABBITMQ_PORT: "5672"
+  
+  monitoring-config:
+    data:
+      PROMETHEUS_URL: "http://prometheus.monitoring.svc.cluster.local:9090"
+      JAEGER_ENDPOINT: "http://jaeger.monitoring.svc.cluster.local:14268"
+      GRAFANA_URL: "http://grafana.monitoring.svc.cluster.local:3000"
+  
+  security-config:
+    data:
+      JWT_SECRET: "customer-a-jwt-secret"
+      OAUTH2_CLIENT_ID: "customer-a-client"
+      OAUTH2_CLIENT_SECRET: "customer-a-secret"
+      TLS_ENABLED: "true"
+  
+  feature-flags:
+    data:
+      NEW_UI_ENABLED: "false"
+      BETA_FEATURES_ENABLED: "false"
+      A_B_TESTING_ENABLED: "true"
+  
+  integrations:
+    data:
+      EXTERNAL_API_URL: "https://api.external-service.com"
+      WEBHOOK_URL: "https://webhook.customer-a.com"
+      SLACK_WEBHOOK: "https://hooks.slack.com/services/customer-a"
+
+# Microservices organized by sync waves
+microservices:
+  # Wave 0: Infrastructure Services
+  infrastructure:
+    sync-wave: 0
+    name: "infrastructure"
+    services:
+      - name: "postgresql"
+        enabled: true
+        image: "postgres:15-alpine"
+        replicas: 1
+        dependencies: []
+        healthCheck:
+          endpoint: "/health"
+          port: 5432
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        deploymentStrategy: "RECREATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 300
+        volumeClaims:
+          - name: "postgresql-data"
+            size: "10Gi"
+            storageClass: "gp2"
+      
+      - name: "redis"
+        enabled: true
+        image: "redis:7-alpine"
+        replicas: 1
+        dependencies: []
+        healthCheck:
+          endpoint: "/ping"
+          port: 6379
+          initialDelaySeconds: 10
+          intervalSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "200m"
+            memory: "512Mi"
+        deploymentStrategy: "RECREATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 120
+        volumeClaims:
+          - name: "redis-data"
+            size: "5Gi"
+            storageClass: "gp2"
+      
+      - name: "kafka"
+        enabled: true
+        image: "confluentinc/cp-kafka:7.4.0"
+        replicas: 3
+        dependencies: []
+        healthCheck:
+          endpoint: "/health"
+          port: 9092
+          initialDelaySeconds: 60
+          intervalSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 300
+        volumeClaims:
+          - name: "kafka-data"
+            size: "20Gi"
+            storageClass: "gp2"
+
+  # Wave 1: Database Services
+  databases:
+    sync-wave: 1
+    name: "databases"
+    services:
+      - name: "user-db-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/user-db-service:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["postgresql"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 180
+        configMaps: ["app-config", "database-config"]
+      
+      - name: "order-db-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/order-db-service:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["postgresql", "user-db-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 180
+        configMaps: ["app-config", "database-config"]
+
+  # Wave 2: Core API Services
+  core-apis:
+    sync-wave: 2
+    name: "core-apis"
+    services:
+      - name: "auth-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/auth-service:{{ .Values.global.imageTag }}"
+        replicas: 3
+        dependencies: ["user-db-service", "redis"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "512Mi"
+          limits:
+            cpu: "600m"
+            memory: "1Gi"
+        deploymentStrategy: "BLUE_GREEN"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 240
+        configMaps: ["app-config", "security-config", "redis-config"]
+      
+      - name: "user-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/user-service:{{ .Values.global.imageTag }}"
+        replicas: 3
+        dependencies: ["user-db-service", "auth-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 180
+        configMaps: ["app-config", "database-config", "security-config"]
+      
+      - name: "order-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/order-service:{{ .Values.global.imageTag }}"
+        replicas: 3
+        dependencies: ["order-db-service", "user-service", "auth-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "512Mi"
+          limits:
+            cpu: "600m"
+            memory: "1Gi"
+        deploymentStrategy: "CANARY"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 240
+        configMaps: ["app-config", "database-config", "messaging-config"]
+
+  # Wave 3: Business Services
+  business:
+    sync-wave: 3
+    name: "business"
+    services:
+      - name: "payment-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/payment-service:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["auth-service", "order-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "400m"
+            memory: "512Mi"
+          limits:
+            cpu: "800m"
+            memory: "1Gi"
+        deploymentStrategy: "BLUE_GREEN"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 300
+        configMaps: ["app-config", "security-config", "integrations"]
+      
+      - name: "notification-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/notification-service:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["user-service", "order-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "400m"
+            memory: "512Mi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 180
+        configMaps: ["app-config", "messaging-config", "integrations"]
+      
+      - name: "analytics-service"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/analytics-service:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["user-service", "order-service", "payment-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 240
+        configMaps: ["app-config", "database-config", "monitoring-config"]
+
+  # Wave 4: Frontend Services
+  frontend:
+    sync-wave: 4
+    name: "frontend"
+    services:
+      - name: "web-frontend"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/web-frontend:{{ .Values.global.imageTag }}"
+        replicas: 3
+        dependencies: ["user-service", "order-service", "payment-service", "auth-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 80
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        deploymentStrategy: "ROLLING_UPDATE"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 180
+        configMaps: ["app-config", "feature-flags", "integrations"]
+      
+      - name: "mobile-api"
+        enabled: true
+        image: "{{ .Values.global.customerId }}/mobile-api:{{ .Values.global.imageTag }}"
+        replicas: 2
+        dependencies: ["user-service", "order-service", "payment-service", "auth-service"]
+        healthCheck:
+          endpoint: "/health"
+          port: 8080
+          initialDelaySeconds: 30
+          intervalSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "400m"
+            memory: "512Mi"
+        deploymentStrategy: "CANARY"
+        rollback:
+          enabled: true
+          rollbackTimeoutSeconds: 240
+        configMaps: ["app-config", "security-config", "feature-flags"]
+
+# Secrets configuration
+secrets:
+  database-secret:
+    data:
+      DB_USERNAME: "customer_a_user"
+      DB_PASSWORD: "customer_a_password"
+  
+  redis-secret:
+    data:
+      REDIS_PASSWORD: "customer_a_redis_password"
+  
+  jwt-secret:
+    data:
+      JWT_SECRET: "customer_a_jwt_secret_key"
+  
+  oauth2-secret:
+    data:
+      OAUTH2_CLIENT_ID: "customer_a_client_id"
+      OAUTH2_CLIENT_SECRET: "customer_a_client_secret"
+
+# Service mesh configuration (Istio)
+istio:
+  enabled: true
+  virtualService:
+    enabled: true
+    gateways:
+      - "customer-a-gateway"
+    hosts:
+      - "api.customer-a.com"
+  
+  destinationRule:
+    enabled: true
+    trafficPolicy:
+      loadBalancer:
+        simple: "ROUND_ROBIN"
+      connectionPool:
+        tcp:
+          maxConnections: 100
+        http:
+          http1MaxPendingRequests: 100
+          maxRequestsPerConnection: 10
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+    path: "/metrics"
+    port: "http"
+  
+  prometheusRule:
+    enabled: true
+    groups:
+      - name: "customer-a.rules"
+        rules:
+          - alert: "HighErrorRate"
+            expr: 'rate(http_requests_total{status=~"5.."}[5m]) > 0.1'
+            for: "5m"
+            labels:
+              severity: "warning"
+            annotations:
+              summary: "High error rate detected"
+              description: "Service {{ $labels.service }} has high error rate"
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: "api.customer-a.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service:
+            name: "customer-a-api-gateway"
+            port:
+              number: 80
+  tls:
+    - secretName: "customer-a-tls"
+      hosts:
+        - "api.customer-a.com" 

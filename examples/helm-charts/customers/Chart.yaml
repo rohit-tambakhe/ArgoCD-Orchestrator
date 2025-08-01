@@ -1,0 +1,23 @@
+apiVersion: v2
+name: customer-services
+description: A Helm chart for deploying customer microservices with sync waves and dependency management
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - argocd
+  - orchestrator
+  - microservices
+  - sync-waves
+  - dependencies
+home: https://github.com/your-org/argo-orchestrator
+sources:
+  - https://github.com/your-org/argo-orchestrator
+maintainers:
+  - name: ArgoCD Orchestrator Team
+    email: team@your-org.com
+dependencies:
+  - name: base-services
+    version: 1.0.0
+    repository: file://../base
+    condition: base-services.enabled 

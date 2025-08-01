@@ -1,0 +1,17 @@
+apiVersion: v2
+name: base-services
+description: A Helm chart for deploying base infrastructure and shared services
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - argocd
+  - orchestrator
+  - infrastructure
+  - shared-services
+home: https://github.com/your-org/argo-orchestrator
+sources:
+  - https://github.com/your-org/argo-orchestrator
+maintainers:
+  - name: ArgoCD Orchestrator Team
+    email: team@your-org.com 

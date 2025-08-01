@@ -1,0 +1,66 @@
+{{- if .Values.microservices }}
+{{- range $waveName, $wave := .Values.microservices }}
+{{- range $service := $wave.services }}
+{{- if $service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Values.global.customerId }}-{{ $service.name }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    {{- include "customer-services.labels" $ | nindent 4 }}
+    {{- include "customer-services.customerLabels" $ | nindent 4 }}
+    app: {{ $service.name }}
+    customer: {{ $.Values.global.customerId }}
+    wave: {{ $wave.sync-wave }}
+  annotations:
+    {{- include "serviceMeshAnnotations" $service | nindent 4 }}
+    {{- include "monitoringAnnotations" $ | nindent 4 }}
+    orchestrator.rtte.com/customer-id: {{ $.Values.global.customerId }}
+    orchestrator.rtte.com/service-name: {{ $service.name }}
+    orchestrator.rtte.com/sync-wave: {{ $wave.sync-wave | quote }}
+spec:
+  type: {{ $service.serviceType | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ $service.servicePort | default 8080 }}
+      targetPort: {{ $service.healthCheck.port | default 8080 }}
+      protocol: TCP
+    {{- if $service.additionalPorts }}
+    {{- range $service.additionalPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      protocol: {{ .protocol | default "TCP" }}
+    {{- end }}
+    {{- end }}
+  selector:
+    app: {{ $service.name }}
+    customer: {{ $.Values.global.customerId }}
+  {{- if $service.sessionAffinity }}
+  sessionAffinity: {{ $service.sessionAffinity }}
+  {{- if $service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml $service.sessionAffinityConfig | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if $service.externalIPs }}
+  externalIPs:
+    {{- range $service.externalIPs }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if $service.loadBalancerIP }}
+  loadBalancerIP: {{ $service.loadBalancerIP }}
+  {{- end }}
+  {{- if $service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- range $service.loadBalancerSourceRanges }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }} 

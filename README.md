@@ -1197,6 +1197,825 @@ spec:
             sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
 ```
 
+## **End-to-End Workflow Design**
+
+This section provides a comprehensive overview of the complete end-to-end workflow, from code commit to production deployment, including all the components, their interactions, and the decision points throughout the process.
+
+### **Complete Workflow Architecture**
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Developer     │    │   CI/CD System  │    │   Argo Events   │    │   ArgoCD        │
+│   (Code Push)   │───▶│   (GitHub       │───▶│   (Event        │───▶│   (GitOps       │
+│                 │    │    Actions)     │    │    Bus)         │    │    Sync)        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                        │                        │
+                                ▼                        ▼                        ▼
+                       ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+                       │   Helm Charts   │    │   Argo          │    │   Kubernetes    │
+                       │   (values.yaml) │    │   Workflows     │    │   Cluster       │
+                       │                 │    │   (Orchestration│    │   (Deployment)  │
+                       └─────────────────┘    │   Engine)       │    └─────────────────┘
+                                              └─────────────────┘
+                                                       │
+                                                       ▼
+                                              ┌─────────────────┐
+                                              │   Argo          │
+                                              │   Rollouts      │
+                                              │   (Progressive  │
+                                              │   Delivery)     │
+                                              └─────────────────┘
+                                                       │
+                                                       ▼
+                                              ┌─────────────────┐
+                                              │   ArgoCD        │
+                                              │   Orchestrator  │
+                                              │   (Monitoring & │
+                                              │   Management)   │
+                                              └─────────────────┘
+```
+
+### **Detailed Workflow Steps**
+
+#### **Phase 1: Development & CI/CD (0-5 minutes)**
+
+1. **Code Development & Push**
+   ```bash
+   # Developer pushes code to main branch
+   git add .
+   git commit -m "Add new feature to payment-service"
+   git push origin main
+   ```
+
+2. **GitHub Actions Workflow Trigger**
+   ```yaml
+   # .github/workflows/build-and-deploy.yml
+   name: Build and Deploy
+   on:
+     push:
+       branches: [main]
+     pull_request:
+       branches: [main]
+   
+   jobs:
+     # Job 1: Build and Test
+     build-and-test:
+       runs-on: ubuntu-latest
+       strategy:
+         matrix:
+           service: [user-service, auth-service, payment-service, order-service, notification-service]
+       steps:
+         - uses: actions/checkout@v4
+         - name: Set up Docker Buildx
+           uses: docker/setup-buildx-action@v3
+         - name: Build and Test Service
+           run: |
+             cd services/${{ matrix.service }}
+             docker build --cache-from type=gha --cache-to type=gha,mode=max -t rtte/${{ matrix.service }}:${{ github.sha }} .
+             docker run --rm rtte/${{ matrix.service }}:${{ github.sha }} npm test
+         - name: Push to Registry
+           run: |
+             docker push rtte/${{ matrix.service }}:${{ github.sha }}
+             docker tag rtte/${{ matrix.service }}:${{ github.sha }} rtte/${{ matrix.service }}:latest
+             docker push rtte/${{ matrix.service }}:latest
+   
+     # Job 2: Update Helm Values
+     update-helm-values:
+       needs: build-and-test
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - name: Update Image Tags
+           run: |
+             # Update all customer values.yaml files with new image tags
+             for customer_dir in examples/helm-charts/customers/*/; do
+               customer=$(basename $customer_dir)
+               echo "Updating $customer with image tag: ${{ github.sha }}"
+               
+               # Update global image tag
+               yq eval ".global.imageTag = \"${{ github.sha }}\"" -i $customer_dir/values.yaml
+               
+               # Update specific service image tags if needed
+               yq eval ".microservices.core-apis.services[0].image = \"rtte/user-service:${{ github.sha }}\"" -i $customer_dir/values.yaml
+               yq eval ".microservices.core-apis.services[1].image = \"rtte/auth-service:${{ github.sha }}\"" -i $customer_dir/values.yaml
+               yq eval ".microservices.business.services[0].image = \"rtte/payment-service:${{ github.sha }}\"" -i $customer_dir/values.yaml
+             done
+         
+         - name: Commit and Push Changes
+           run: |
+             git config user.name "GitHub Actions"
+             git config user.email "actions@github.com"
+             git add examples/helm-charts/customers/*/values.yaml
+             git commit -m "Update image tags to ${{ github.sha }} for all customers"
+             git push origin main
+   
+     # Job 3: Trigger Argo Events
+     trigger-argo-events:
+       needs: update-helm-values
+       runs-on: ubuntu-latest
+       steps:
+         - name: Trigger Argo Events
+           run: |
+             # Send webhook to Argo Events
+             curl -X POST \
+               -H "Content-Type: application/json" \
+               -H "X-GitHub-Event: push" \
+               -d '{
+                 "ref": "refs/heads/main",
+                 "sha": "${{ github.sha }}",
+                 "repository": {
+                   "full_name": "rtte/argo-orchestrator"
+                 },
+                 "commits": [{
+                   "id": "${{ github.sha }}",
+                   "message": "Update image tags to ${{ github.sha }}"
+                 }]
+               }' \
+               http://argo-events-webhook.argo-events.svc.cluster.local:12000/github-eventsource
+   ```
+
+#### **Phase 2: Argo Events Processing (5-10 minutes)**
+
+3. **Argo Events EventSource Configuration**
+   ```yaml
+   # k8s/argo-events/eventsource.yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: EventSource
+   metadata:
+     name: github-eventsource
+     namespace: argo-events
+   spec:
+     service:
+       ports:
+         - port: 12000
+           targetPort: 12000
+     webhook:
+       github:
+         repositories:
+           - owner: rtte
+             name: argo-orchestrator
+         events:
+           - push
+         webhook:
+           endpoint: /github-eventsource
+           port: "12000"
+           url: "https://argo-events-webhook.argo-events.svc.cluster.local"
+   ```
+
+4. **Argo Events Sensor Processing**
+   ```yaml
+   # k8s/argo-events/sensor.yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: Sensor
+   metadata:
+     name: deployment-sensor
+     namespace: argo-events
+   spec:
+     dependencies:
+       - name: github-eventsource
+         eventSourceName: github-eventsource
+         eventName: github-push
+     triggers:
+       - template:
+           name: trigger-deployment-workflow
+           http:
+             url: "http://argocd-orchestrator.argocd-orchestrator.svc.cluster.local:8080/api/v1/deployments/trigger"
+             method: POST
+             headers:
+               Content-Type: application/json
+             payload:
+               - src:
+                   dataKey: body
+                 dest: body
+   ```
+
+#### **Phase 3: ArgoCD Orchestrator Processing (10-15 minutes)**
+
+5. **Orchestrator Receives Event**
+   ```java
+   // ArgoCD Orchestrator receives webhook
+   @PostMapping("/api/v1/deployments/trigger")
+   public ResponseEntity<DeploymentTriggerResponse> triggerDeployment(
+       @RequestBody GitHubWebhookPayload payload) {
+       
+       // Parse webhook payload
+       String commitSha = payload.getCommits().get(0).getId();
+       String branch = payload.getRef();
+       
+       // Validate webhook signature
+       if (!webhookValidator.validateSignature(payload, signature)) {
+           return ResponseEntity.status(401).build();
+       }
+       
+       // Create deployment request
+       DeploymentRequest request = DeploymentRequest.builder()
+           .commitSha(commitSha)
+           .branch(branch)
+           .timestamp(Instant.now())
+           .build();
+       
+       // Process deployment
+       DeploymentResponse response = deploymentService.processDeployment(request);
+       
+       return ResponseEntity.ok(response);
+   }
+   ```
+
+6. **Dependency Resolution & Sync Wave Planning**
+   ```java
+   // DependencyResolutionService.java
+   public DependencyResolutionResult resolveDependencies(String customerId) {
+       // Load customer configuration
+       CustomerConfig config = customerConfigService.loadConfig(customerId);
+       
+       // Build dependency graph
+       DependencyGraph graph = new DependencyGraph();
+       
+       // Add all microservices to graph
+       for (SyncWave wave : config.getSyncWaves()) {
+           for (Microservice service : wave.getServices()) {
+               graph.addNode(service.getName(), service.getDependencies());
+           }
+       }
+       
+       // Detect circular dependencies
+       if (graph.hasCircularDependencies()) {
+           throw new CircularDependencyException("Circular dependencies detected");
+       }
+       
+       // Generate topological order
+       List<String> deploymentOrder = graph.getTopologicalOrder();
+       
+       return DependencyResolutionResult.builder()
+           .deploymentOrder(deploymentOrder)
+           .syncWaves(config.getSyncWaves())
+           .build();
+   }
+   ```
+
+#### **Phase 4: Argo Workflows Execution (15-30 minutes)**
+
+7. **Argo Workflow Creation**
+   ```yaml
+   # k8s/argo-workflows/deployment-workflow.yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: Workflow
+   metadata:
+     name: customer-deployment-{{workflow.parameters.customer-id}}-{{workflow.parameters.commit-sha}}
+     namespace: argo-workflows
+   spec:
+     arguments:
+       parameters:
+         - name: customer-id
+           value: "{{workflow.parameters.customer-id}}"
+         - name: commit-sha
+           value: "{{workflow.parameters.commit-sha}}"
+         - name: environment
+           value: "production"
+     
+     templates:
+       - name: deployment-pipeline
+         steps:
+           - - name: validate-prerequisites
+               template: validate-prerequisites
+           - - name: setup-argo-events
+               template: setup-argo-events
+           - - name: deploy-orchestrator
+               template: deploy-orchestrator
+           - - name: validate-helm-values
+               template: validate-helm-values
+           - - name: trigger-application-set
+               template: trigger-application-set
+           - - name: monitor-sync-waves
+               template: monitor-sync-waves
+           - - name: validate-deployment
+               template: validate-deployment
+           - - name: notify-completion
+               template: notify-completion
+       
+       - name: validate-prerequisites
+         script:
+           image: bitnami/kubectl:latest
+           command: [bash]
+           source: |
+             # Check if ArgoCD is running
+             kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server
+             
+             # Check if Argo Events is running
+             kubectl get pods -n argo-events -l app=eventbus-controller
+             
+             # Check if Argo Rollouts is running
+             kubectl get pods -n argo-rollouts -l app=rollouts-controller
+             
+             # Check if customer namespace exists
+             kubectl get namespace {{workflow.parameters.customer-id}}-production
+       
+       - name: validate-helm-values
+         script:
+           image: alpine/helm:latest
+           command: [bash]
+           source: |
+             # Validate Helm values
+             helm template examples/helm-charts/customers/{{workflow.parameters.customer-id}}/ \
+               --values examples/helm-charts/customers/{{workflow.parameters.customer-id}}/values.yaml \
+               --dry-run
+       
+       - name: trigger-application-set
+         script:
+           image: bitnami/kubectl:latest
+           command: [bash]
+           source: |
+             # Trigger ArgoCD ApplicationSet
+             kubectl patch applicationset customer-applications -n argocd \
+               --type='merge' \
+               -p='{"spec":{"generators":[{"git":{"repositories":[{"owner":"rtte","name":"argo-orchestrator","ref":"{{workflow.parameters.commit-sha}}"}]}}]}}'
+       
+       - name: monitor-sync-waves
+         script:
+           image: bitnami/kubectl:latest
+           command: [bash]
+           source: |
+             # Monitor sync waves progress
+             for wave in 0 1 2 3 4; do
+               echo "Monitoring sync wave $wave..."
+               
+               # Wait for wave to complete
+               kubectl wait --for=condition=Synced \
+                 --selector=argocd.argoproj.io/sync-wave=$wave \
+                 --timeout=300s \
+                 -n {{workflow.parameters.customer-id}}-production
+               
+               # Validate wave health
+               kubectl get pods -n {{workflow.parameters.customer-id}}-production \
+                 --selector=wave=$wave \
+                 --field-selector=status.phase=Running
+             done
+   ```
+
+#### **Phase 5: ArgoCD GitOps Sync (30-45 minutes)**
+
+8. **ArgoCD ApplicationSet Processing**
+   ```yaml
+   # k8s/argocd/applicationset.yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: ApplicationSet
+   metadata:
+     name: customer-applications
+     namespace: argocd
+   spec:
+     generators:
+       - git:
+           repoURL: https://github.com/rtte/argo-orchestrator
+           targetRevision: main
+           directories:
+             - path: examples/helm-charts/customers/*/
+     
+     template:
+       metadata:
+         name: '{{name}}-applications'
+         namespace: argocd
+         annotations:
+           orchestrator.rtte.com/customer-id: '{{name}}'
+           orchestrator.rtte.com/sync-waves: "true"
+           orchestrator.rtte.com/dependency-management: "true"
+       
+       spec:
+         project: default
+         source:
+           repoURL: https://github.com/rtte/argo-orchestrator
+           targetRevision: main
+           path: '{{path}}'
+           helm:
+             valueFiles:
+               - values.yaml
+         
+         destination:
+           server: https://kubernetes.default.svc
+           namespace: '{{name}}-production'
+         
+         syncPolicy:
+           automated:
+             prune: true
+             selfHeal: true
+           syncOptions:
+             - CreateNamespace=true
+             - PrunePropagationPolicy=foreground
+             - PruneLast=true
+   ```
+
+9. **Sync Wave Execution**
+   ```bash
+   # ArgoCD processes sync waves in order
+   # Wave 0: Infrastructure (0-5 minutes)
+   kubectl get pods -n customer-a-production --selector=wave=0
+   
+   # Wave 1: Databases (5-10 minutes)
+   kubectl get pods -n customer-a-production --selector=wave=1
+   
+   # Wave 2: Core APIs (10-20 minutes)
+   kubectl get pods -n customer-a-production --selector=wave=2
+   
+   # Wave 3: Business Services (20-30 minutes)
+   kubectl get pods -n customer-a-production --selector=wave=3
+   
+   # Wave 4: Frontend (30-35 minutes)
+   kubectl get pods -n customer-a-production --selector=wave=4
+   ```
+
+#### **Phase 6: Argo Rollouts Progressive Delivery (35-60 minutes)**
+
+10. **Argo Rollouts with Analysis**
+    ```yaml
+    # examples/helm-charts/customers/templates/rollout.yaml
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: customer-a-payment-service
+      namespace: customer-a-production
+      annotations:
+        argocd.argoproj.io/sync-wave: "3"
+        orchestrator.rtte.com/dependencies: "user-service,auth-service"
+        orchestrator.rtte.com/deployment-strategy: "BLUE_GREEN"
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: payment-service
+          customer: customer-a
+      
+      template:
+        metadata:
+          labels:
+            app: payment-service
+            customer: customer-a
+            version: "abc123"
+        spec:
+          containers:
+            - name: payment-service
+              image: rtte/payment-service:abc123
+              ports:
+                - containerPort: 8080
+      
+      strategy:
+        blueGreen:
+          activeService: customer-a-payment-service-active
+          previewService: customer-a-payment-service-preview
+          autoPromotionEnabled: false
+          scaleDownDelaySeconds: 30
+          
+          prePromotionAnalysis:
+            templates:
+              - templateName: success-rate
+                clusterScope: false
+            args:
+              - name: service-name
+                value: payment-service
+              - name: customer-id
+                value: customer-a
+          
+          postPromotionAnalysis:
+            templates:
+              - templateName: success-rate
+                clusterScope: false
+            args:
+              - name: service-name
+                value: payment-service
+              - name: customer-id
+                value: customer-a
+    ```
+
+11. **Analysis Template Execution**
+    ```yaml
+    # k8s/argo-rollouts/analysis-template.yaml
+    apiVersion: argoproj.io/v1alpha1
+    kind: AnalysisTemplate
+    metadata:
+      name: success-rate
+      namespace: argo-rollouts
+    spec:
+      args:
+        - name: service-name
+          description: "Name of the service to analyze"
+        - name: customer-id
+          description: "Customer ID for the service"
+      
+      metrics:
+        - name: success-rate
+          interval: 30s
+          count: 5
+          successCondition: result[0] >= 0.95
+          failureCondition: result[0] < 0.95
+          failureLimit: 3
+          provider:
+            prometheus:
+              address: http://prometheus.monitoring.svc.cluster.local:9090
+              query: |
+                sum(rate(http_requests_total{service="{{args.service-name}}", status=~"2.."}[5m]))
+                /
+                sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+        
+        - name: latency
+          interval: 30s
+          count: 5
+          successCondition: result[0] <= 0.5
+          failureCondition: result[0] > 0.5
+          failureLimit: 3
+          provider:
+            prometheus:
+              address: http://prometheus.monitoring.svc.cluster.local:9090
+              query: |
+                histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[5m]))
+        
+        - name: error-rate
+          interval: 30s
+          count: 5
+          successCondition: result[0] <= 0.05
+          failureCondition: result[0] > 0.05
+          failureLimit: 3
+          provider:
+            prometheus:
+              address: http://prometheus.monitoring.svc.cluster.local:9090
+              query: |
+                sum(rate(http_requests_total{service="{{args.service-name}}", status=~"5.."}[5m]))
+                /
+                sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+    ```
+
+#### **Phase 7: ArgoCD Orchestrator Monitoring (60-90 minutes)**
+
+12. **Real-time Monitoring & Health Checks**
+    ```java
+    // MicroserviceHealthService.java
+    @Service
+    public class MicroserviceHealthService {
+        
+        @Scheduled(fixedRate = 30000) // Every 30 seconds
+        public void monitorMicroservices() {
+            List<Customer> customers = customerService.getAllCustomers();
+            
+            for (Customer customer : customers) {
+                for (SyncWave wave : customer.getSyncWaves()) {
+                    for (Microservice service : wave.getServices()) {
+                        HealthStatus status = checkServiceHealth(customer, service);
+                        
+                        if (status.isUnhealthy()) {
+                            handleUnhealthyService(customer, service, status);
+                        }
+                        
+                        // Update metrics
+                        healthMetrics.recordHealthStatus(customer.getId(), service.getName(), status);
+                    }
+                }
+            }
+        }
+        
+        private HealthStatus checkServiceHealth(Customer customer, Microservice service) {
+            String serviceUrl = String.format("http://%s-%s.%s-production.svc.cluster.local:%d%s",
+                customer.getId(), service.getName(), customer.getId(), 
+                service.getHealthCheck().getPort(), service.getHealthCheck().getEndpoint());
+            
+            try {
+                ResponseEntity<String> response = restTemplate.getForEntity(serviceUrl, String.class);
+                return HealthStatus.builder()
+                    .healthy(response.getStatusCode().is2xxSuccessful())
+                    .statusCode(response.getStatusCodeValue())
+                    .responseTime(System.currentTimeMillis())
+                    .build();
+            } catch (Exception e) {
+                return HealthStatus.builder()
+                    .healthy(false)
+                    .error(e.getMessage())
+                    .responseTime(System.currentTimeMillis())
+                    .build();
+            }
+        }
+    }
+    ```
+
+13. **Rollback Management**
+    ```java
+    // RollbackManagerService.java
+    @Service
+    public class RollbackManagerService {
+        
+        public void handleDeploymentFailure(Customer customer, Microservice service, String reason) {
+            // Check if rollback is enabled
+            if (!service.getRollback().isEnabled()) {
+                log.warn("Rollback disabled for service: {}", service.getName());
+                return;
+            }
+            
+            // Get previous successful deployment
+            Deployment previousDeployment = deploymentRepository
+                .findLastSuccessfulDeployment(customer.getId(), service.getName());
+            
+            if (previousDeployment != null) {
+                // Trigger rollback
+                triggerRollback(customer, service, previousDeployment);
+                
+                // Send notifications
+                notificationService.sendRollbackNotification(customer, service, reason);
+            }
+        }
+        
+        private void triggerRollback(Customer customer, Microservice service, Deployment previousDeployment) {
+            // Update Helm values to previous image
+            String previousImage = previousDeployment.getImage();
+            
+            // Update values.yaml
+            updateHelmValues(customer.getId(), service.getName(), previousImage);
+            
+            // Commit and push changes
+            gitService.commitAndPush(String.format("Rollback %s to %s", service.getName(), previousImage));
+            
+            // ArgoCD will automatically sync the changes
+        }
+    }
+    ```
+
+### **Workflow Decision Points & Error Handling**
+
+#### **Decision Point 1: Build Success/Failure**
+- **Success**: Continue to Helm values update
+- **Failure**: Stop workflow, notify developers, create issue
+
+#### **Decision Point 2: Helm Validation**
+- **Success**: Continue to ArgoCD sync
+- **Failure**: Stop workflow, notify DevOps team
+
+#### **Decision Point 3: Sync Wave Completion**
+- **Success**: Continue to next wave
+- **Failure**: 
+  - Retry up to 3 times
+  - If still failing, trigger rollback
+  - Notify operations team
+
+#### **Decision Point 4: Health Check Results**
+- **Healthy**: Continue deployment
+- **Unhealthy**: 
+  - Pause deployment
+  - Run additional diagnostics
+  - Decide on rollback or manual intervention
+
+#### **Decision Point 5: Analysis Results**
+- **Success**: Promote to active (Blue-Green) or continue (Canary)
+- **Failure**: 
+  - Rollback automatically
+  - Notify stakeholders
+  - Create incident ticket
+
+### **Monitoring & Observability**
+
+#### **Real-time Dashboard**
+```yaml
+# Grafana Dashboard Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-orchestrator-dashboard
+  namespace: monitoring
+data:
+  dashboard.json: |
+    {
+      "dashboard": {
+        "title": "ArgoCD Orchestrator - End-to-End Workflow",
+        "panels": [
+          {
+            "title": "Deployment Pipeline Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "argo_workflows_status_total{status=\"Running\"}"
+              }
+            ]
+          },
+          {
+            "title": "Sync Wave Progress",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "argocd_sync_wave_progress{customer=\"customer-a\"}"
+              }
+            ]
+          },
+          {
+            "title": "Service Health Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "microservice_health_status{customer=\"customer-a\"}"
+              }
+            ]
+          },
+          {
+            "title": "Rollout Progress",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "argocd_rollout_progress{service=\"payment-service\"}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+```
+
+#### **Alerting Rules**
+```yaml
+# Prometheus Alerting Rules
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: PrometheusRule
+metadata:
+  name: argo-orchestrator-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: argo-orchestrator.rules
+      rules:
+        - alert: DeploymentWorkflowFailed
+          expr: argo_workflows_status_total{status="Failed"} > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Deployment workflow failed"
+            description: "Deployment workflow {{ $labels.workflow_name }} has failed"
+        
+        - alert: SyncWaveStuck
+          expr: argocd_sync_wave_duration_seconds > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Sync wave stuck"
+            description: "Sync wave {{ $labels.wave }} for customer {{ $labels.customer }} is taking too long"
+        
+        - alert: ServiceUnhealthy
+          expr: microservice_health_status{status="unhealthy"} > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Service unhealthy"
+            description: "Service {{ $labels.service_name }} for customer {{ $labels.customer }} is unhealthy"
+        
+        - alert: RolloutAnalysisFailed
+          expr: argocd_rollout_analysis_failed_total > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Rollout analysis failed"
+            description: "Rollout analysis for {{ $labels.service_name }} has failed"
+```
+
+### **Performance Metrics & SLAs**
+
+#### **Deployment Time SLAs**
+- **Total End-to-End Time**: < 90 minutes
+- **CI/CD Pipeline**: < 15 minutes
+- **ArgoCD Sync**: < 45 minutes
+- **Health Validation**: < 30 minutes
+
+#### **Success Rate Targets**
+- **Build Success Rate**: > 99%
+- **Deployment Success Rate**: > 95%
+- **Rollback Success Rate**: > 99%
+- **Service Health Rate**: > 99.9%
+
+#### **Key Performance Indicators (KPIs)**
+```yaml
+# Custom Metrics for KPIs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kpi-metrics
+  namespace: monitoring
+data:
+  metrics.yaml: |
+    kpis:
+      - name: deployment_frequency
+        description: "Number of deployments per day"
+        query: "rate(deployments_total[24h])"
+        target: "> 10"
+      
+      - name: lead_time
+        description: "Time from commit to production"
+        query: "histogram_quantile(0.95, deployment_lead_time_seconds)"
+        target: "< 5400"  # 90 minutes
+      
+      - name: mean_time_to_recovery
+        description: "Time to recover from failure"
+        query: "histogram_quantile(0.95, rollback_duration_seconds)"
+        target: "< 300"  # 5 minutes
+      
+      - name: change_failure_rate
+        description: "Percentage of deployments causing failures"
+        query: "rate(deployment_failures_total[24h]) / rate(deployments_total[24h])"
+        target: "< 0.05"  # 5%
+```
+
 ### **Argo Orchestrator Integration**
 
 The Argo Orchestrator monitors ArgoCD applications and manages:
